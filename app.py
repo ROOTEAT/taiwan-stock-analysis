@@ -148,6 +148,7 @@ h3 {font-size:clamp(1.15rem, 1.8vw, 1.5rem) !important;}
 .st-key-beginner_assist [data-testid="stTooltipIcon"],
 .st-key-beginner_assist [data-testid="stTooltipHoverTarget"] {
   width:24px !important;
+
   height:24px !important;
 }
 .st-key-beginner_assist [data-testid="stTooltipIcon"] svg {
@@ -298,6 +299,7 @@ def render_beginner_guide() -> None:
         'K 線圖移到任一根 K 棒，可查看當日點位與漲跌幅。</div>',
         unsafe_allow_html=True,
     )
+
     with st.expander("📖 常用盤中術語與交易時間", expanded=False):
         st.markdown("""
 | 術語 | 白話說明 |
@@ -384,7 +386,744 @@ def render_market_clocks() -> None:
         <div class="clock">
           <div class="name">{clock.name} <span>{clock.status}</span></div>
           <div class="event">{clock.event_label}</div>
-          <div class="countdown" data-target="{clock.target.isoformat()}">--:--:--<…9855 tokens truncated…                gain_text = f"{gain:+.1%}" if gain is not None else "未設定成本"
+          <div class="countdown" data-target="{clock.target.isoformat()}">--:--:--</div>
+          <div class="zone">{clock.timezone_name}</div>
+        </div>""")
+    components.html(f"""
+    <style>
+      body {{margin:0;color:#eef5ff;font-family:system-ui;background:transparent}}
+      .wrap {{display:grid;grid-template-columns:1fr 1fr;gap:12px}}
+      .clock {{padding:14px 18px;border-radius:18px;background:rgba(255,255,255,.08);
+        border:1px solid rgba(255,255,255,.15);backdrop-filter:blur(15px)}}
+      .name {{font-size:17px;font-weight:700}} .name span {{font-size:12px;color:#7dd3fc;margin-left:6px}}
+      .event,.zone {{font-size:12px;opacity:.72}} .countdown {{font-size:24px;font-weight:750;margin:3px 0}}
+    </style>
+    <div class="wrap">{''.join(blocks)}</div>
+    <script>
+    function tick(){{
+      document.querySelectorAll('.countdown').forEach(el=>{{
+        let seconds=Math.max(0,Math.floor((new Date(el.dataset.target)-new Date())/1000));
+        let d=Math.floor(seconds/86400); seconds%=86400;
+        let h=Math.floor(seconds/3600); seconds%=3600;
+        let m=Math.floor(seconds/60), s=seconds%60;
+        el.textContent=(d?d+'天 ':'')+[h,m,s].map(x=>String(x).padStart(2,'0')).join(':');
+      }});
+    }} tick(); setInterval(tick,1000);
+    </script>
+    """, height=120)
+
+
+@st.fragment(run_every="10s")
+def render_live_quote(provider: HybridTaiwanProvider, result) -> None:
+    clock = market_clock("台股")
+    quote = result.quote
+    warning = None
+    if clock.status == "交易中":
+        try:
+            quote = provider.get_latest_quote(result.stock, refresh=True)
+        except Exception as exc:
+            warning = f"即時行情更新失敗，保留最後成功資料：{exc}"
+    columns = st.columns(4)
+    metric_card(columns[0], "最新價", money(quote.price), f"{quote.change_pct:+.2f}%", "最新價")
+    metric_card(columns[1], "成交量", f"{quote.volume / 1000:,.0f} 張")
+    metric_card(columns[2], "綜合分數", f"{result.overall_score:.0f} / 100")
+    metric_card(columns[3], "資料信心度", f"{result.confidence:.0f}%")
+    market_time = quote.meta.market_time.astimezone().strftime("%Y-%m-%d %H:%M:%S") if quote.meta.market_time else "未提供"
+    if clock.status == "交易中":
+        st.caption(f"🟢 盤中自動更新：每 10 秒｜行情時間 {market_time}｜{quote.meta.source}")
+    else:
+        st.caption(f"⚪ 目前{clock.status}，暫停自動抓取｜最後行情時間 {market_time}｜{quote.meta.source}")
+    if warning:
+        st.warning(warning)
+
+
+def explain_kbar(row: pd.Series) -> tuple[str, str]:
+    open_price, high, low, close = (float(row[key]) for key in ("open", "high", "low", "close"))
+    full_range = max(high - low, 1e-9)
+    body = abs(close - open_price)
+    upper_shadow = high - max(open_price, close)
+    lower_shadow = min(open_price, close) - low
+    direction = "紅 K（收盤高於開盤，多方當日略勝）" if close > open_price else (
+        "黑 K（收盤低於開盤，空方當日略勝）" if close < open_price else "平盤 K"
+    )
+
+    if body / full_range <= 0.08:
+        pattern = "十字線"
+        meaning = "開盤與收盤很接近，代表當日多空拉鋸、方向尚未明朗。"
+
+    elif upper_shadow >= body * 2 and lower_shadow <= full_range * 0.12:
+        pattern = "長上影／倒鎚型"
+        meaning = "盤中曾明顯上攻，但收盤前被賣壓壓回；需搭配前後趨勢與成交量確認。"
+    elif lower_shadow >= body * 2 and upper_shadow <= full_range * 0.12:
+        pattern = "長下影／鎚子型"
+        meaning = "盤中曾明顯下探，之後出現承接拉回；是否止跌仍需後續 K 棒確認。"
+    elif body / full_range <= 0.35 and upper_shadow > 0 and lower_shadow > 0:
+        pattern = "紡錘線"
+        meaning = "實體較短且上下都有影線，表示買賣雙方交戰激烈、暫無明確勝方。"
+    elif body / full_range >= 0.65:
+        pattern = "長實體紅 K" if close > open_price else "長實體黑 K"
+        meaning = "實體占當日波幅較高，代表當日方向力道較明顯；仍要確認是否有量能與趨勢配合。"
+    else:
+        pattern = "一般紅 K" if close > open_price else "一般黑 K"
+        meaning = "當日有方向但強度並非極端，建議連同前後 K 棒、均線與成交量一起判讀。"
+    return f"{pattern}｜{direction}", meaning
+
+
+def filter_chart_range(prices: pd.DataFrame, display_range: str) -> pd.DataFrame:
+    frame = prices.copy()
+    frame["date"] = pd.to_datetime(frame["date"])
+    range_days = {"一週內": 7, "一個月內": 31, "三個月內": 93, "半年內": 183}
+    cutoff = frame["date"].max() - timedelta(days=range_days.get(display_range, 183))
+    return frame[frame["date"] >= cutoff].copy()
+
+
+def technical_trend_view(row: pd.Series) -> tuple[str, str, str, list[str]]:
+    votes: list[tuple[int, str]] = []
+    if pd.notna(row.ma20):
+        votes.append((1 if row.close >= row.ma20 else -1, "股價在月線之上" if row.close >= row.ma20 else "股價在月線之下"))
+    if pd.notna(row.ma60):
+        votes.append((1 if row.close >= row.ma60 else -1, "股價在季線之上" if row.close >= row.ma60 else "股價在季線之下"))
+    votes.append((1 if row.macd >= row.macd_signal else -1, "MACD 動能偏強" if row.macd >= row.macd_signal else "MACD 動能偏弱"))
+    if row.rsi14 >= 55:
+        votes.append((1, f"RSI {row.rsi14:.0f} 偏強"))
+    elif row.rsi14 <= 45:
+        votes.append((-1, f"RSI {row.rsi14:.0f} 偏弱"))
+    else:
+        votes.append((0, f"RSI {row.rsi14:.0f} 中性"))
+    votes.append((1 if row.kd_k >= row.kd_d else -1, "KD 短期動能向上" if row.kd_k >= row.kd_d else "KD 短期動能向下"))
+    total = sum(score for score, _ in votes)
+    if total >= 2:
+        return "偏多（看漲趨勢）", "🔴", "trend-bull", [reason for _, reason in votes]
+    if total <= -2:
+        return "偏空（看跌趨勢）", "🟢", "trend-bear", [reason for _, reason in votes]
+    return "多空交錯（盤整觀望）", "🟡", "trend-neutral", [reason for _, reason in votes]
+
+
+def style_technical_chart(fig: go.Figure, height: int = 460) -> None:
+    fig.update_layout(
+        height=height,
+        margin={"l": 58, "r": 22, "t": 42, "b": 36},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(15,23,42,.62)",
+        font={"color": "#dbeafe"},
+        hovermode="x unified",
+        hoverlabel={"bgcolor": "#0f172a", "font_color": "#f8fafc"},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.01, "xanchor": "left", "x": 0},
+    )
+    fig.update_xaxes(showgrid=True, gridcolor="rgba(148,163,184,.12)", tickfont={"color": "#cbd5e1"})
+    fig.update_yaxes(
+        showgrid=True, gridcolor="rgba(148,163,184,.12)",
+        tickfont={"color": "#cbd5e1"}, separatethousands=True,
+    )
+
+
+def render_indicator_explanation(chart_type: str, row: pd.Series) -> None:
+    selected_date = pd.to_datetime(row.date).date()
+    with st.container(border=True):
+        st.markdown(f"#### 👆 點選日期：{selected_date:%Y-%m-%d}｜{chart_type}")
+        if chart_type == "布林通道":
+            position = (
+                "收盤位於上軌之上，價格相對近期波動區間偏高"
+                if row.close > row.bollinger_upper else
+                "收盤位於下軌之下，價格相對近期波動區間偏低"
+                if row.close < row.bollinger_lower else
+                "收盤位於通道內，尚未超出近期主要波動範圍"
+            )
+            cols = st.columns(4)
+            for col, label, value in zip(
+                cols, ("收盤價", "布林上軌", "中軌 MA20", "布林下軌"),
+                (row.close, row.bollinger_upper, row.ma20, row.bollinger_lower),
+            ):
+                col.metric(label, f"{value:,.2f}")
+            st.info(f"這個位置代表：{position}。觸及軌道不等於一定反轉，強勢趨勢可能沿著上軌或下軌移動。")
+        elif chart_type == "RSI":
+            state = "偏熱區" if row.rsi14 >= 70 else "偏弱區" if row.rsi14 <= 30 else "中性區"
+            c1, c2 = st.columns(2)
+            c1.metric("RSI(14)", f"{row.rsi14:.2f}")
+            c2.metric("所在區域", state)
+            st.info(f"這個位置代表：RSI 處於{state}。偏熱不等於立刻下跌，偏弱也不等於立刻反彈，仍要確認趨勢。")
+        elif chart_type == "MACD":
+            histogram = row.macd - row.macd_signal
+            relation = "MACD 位於訊號線上方，短期動能相對較強" if histogram >= 0 else "MACD 位於訊號線下方，短期動能相對較弱"
+            cols = st.columns(3)
+            cols[0].metric("MACD", f"{row.macd:.3f}")
+            cols[1].metric("訊號線", f"{row.macd_signal:.3f}")
+            cols[2].metric("柱狀差", f"{histogram:+.3f}", delta_color="inverse")
+            st.info(f"這個位置代表：{relation}。MACD 是落後指標，交叉出現時價格可能已先移動。")
+        elif chart_type == "KD":
+            zone = "高檔區" if max(row.kd_k, row.kd_d) >= 80 else "低檔區" if min(row.kd_k, row.kd_d) <= 20 else "中間區"
+            relation = "K 值高於 D 值，短期動能相對轉強" if row.kd_k >= row.kd_d else "K 值低於 D 值，短期動能相對轉弱"
+            cols = st.columns(3)
+            cols[0].metric("K 值", f"{row.kd_k:.2f}")
+            cols[1].metric("D 值", f"{row.kd_d:.2f}")
+            cols[2].metric("所在區域", zone)
+            st.info(f"這個位置代表：{relation}，目前位於{zone}。鈍化時指標可能長時間停留高檔或低檔。")
+        else:
+            volume_ratio = row.volume / row.volume_ma20 if pd.notna(row.volume_ma20) and row.volume_ma20 else float("nan")
+            atr_pct = row.atr14 / row.close * 100 if row.close else float("nan")
+            activity = "高於近期均量，交易較活躍" if pd.notna(volume_ratio) and volume_ratio >= 1 else "低於近期均量，交易相對清淡"
+            cols = st.columns(4)
+            cols[0].metric("ATR(14)", f"{row.atr14:,.2f}")
+            cols[1].metric("ATR／股價", f"{atr_pct:.2f}%")
+            cols[2].metric("成交量", f"{row.volume / 1000:,.0f} 張")
+            cols[3].metric("相對20日均量", f"{volume_ratio:.2f} 倍" if pd.notna(volume_ratio) else "資料不足")
+            st.info(f"這個位置代表：成交量{activity}。ATR 越高表示波動越大，但 ATR 本身不判斷上漲或下跌。")
+        st.caption("這是單日指標狀態說明，不是買進或賣出指令；請搭配趨勢、基本面、籌碼與風險承受能力。")
+
+
+def render_indicator_chart(prices: pd.DataFrame, display_range: str, chart_type: str) -> None:
+    recent = filter_chart_range(prices, display_range)
+    fig = go.Figure()
+    beginner_note = ""
+
+    if chart_type == "布林通道":
+        fig.add_trace(go.Scatter(
+            x=recent.date, y=recent.bollinger_upper, name="上軌",
+            line={"color": "#94a3b8", "width": 1},
+        ))
+        fig.add_trace(go.Scatter(
+            x=recent.date, y=recent.bollinger_lower, name="下軌",
+            line={"color": "#94a3b8", "width": 1}, fill="tonexty",
+            fillcolor="rgba(148,163,184,.10)",
+        ))
+        fig.add_trace(go.Scatter(x=recent.date, y=recent.ma20, name="中軌 MA20", line={"color": "#facc15"}))
+        fig.add_trace(go.Scatter(x=recent.date, y=recent.close, name="收盤價", line={"color": "#60a5fa", "width": 2}))
+        beginner_note = "布林通道以 20 日均線為中軌；價格靠近上、下軌代表相對位置偏高或偏低，不等於立即反轉。"
+    elif chart_type == "RSI":
+        fig.add_trace(go.Scatter(x=recent.date, y=recent.rsi14, name="RSI(14)", line={"color": "#a78bfa", "width": 2}))
+        fig.add_hline(y=70, line_dash="dash", line_color="#ef4444", annotation_text="70 偏熱")
+        fig.add_hline(y=30, line_dash="dash", line_color="#22c55e", annotation_text="30 偏弱")
+        fig.update_yaxes(range=[0, 100])
+        beginner_note = "RSI 高於 70 常稱偏熱、低於 30 常稱偏弱；強勢趨勢中可能長時間停留在高檔或低檔。"
+    elif chart_type == "MACD":
+        histogram = recent.macd - recent.macd_signal
+        colors = ["#ef4444" if value >= 0 else "#22c55e" for value in histogram]
+        fig.add_trace(go.Bar(x=recent.date, y=histogram, name="柱狀差", marker_color=colors))
+        fig.add_trace(go.Scatter(x=recent.date, y=recent.macd, name="MACD", line={"color": "#60a5fa", "width": 2}))
+        fig.add_trace(go.Scatter(x=recent.date, y=recent.macd_signal, name="訊號線", line={"color": "#facc15", "width": 2}))
+
+        fig.add_hline(y=0, line_color="rgba(255,255,255,.35)")
+        beginner_note = "MACD 向上穿越訊號線常稱黃金交叉，向下穿越稱死亡交叉；交叉可能落後價格，需配合趨勢判讀。"
+    elif chart_type == "KD":
+        fig.add_trace(go.Scatter(x=recent.date, y=recent.kd_k, name="K 值", line={"color": "#60a5fa", "width": 2}))
+        fig.add_trace(go.Scatter(x=recent.date, y=recent.kd_d, name="D 值", line={"color": "#facc15", "width": 2}))
+        fig.add_hline(y=80, line_dash="dash", line_color="#ef4444", annotation_text="80 高檔")
+        fig.add_hline(y=20, line_dash="dash", line_color="#22c55e", annotation_text="20 低檔")
+        fig.update_yaxes(range=[0, 100])
+        beginner_note = "KD 常用 80／20 觀察相對高低檔；K、D 交叉只是動能變化，不宜單獨視為買賣訊號。"
+    else:  # ATR 與量能
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.45, 0.55], vertical_spacing=0.08)
+        fig.add_trace(go.Scatter(x=recent.date, y=recent.atr14, name="ATR(14)", line={"color": "#fb923c", "width": 2}), row=1, col=1)
+        volume_colors = ["#ef4444" if close >= open_ else "#22c55e" for open_, close in zip(recent.open, recent.close)]
+        fig.add_trace(go.Bar(x=recent.date, y=recent.volume, name="成交量", marker_color=volume_colors), row=2, col=1)
+        fig.add_trace(go.Scatter(x=recent.date, y=recent.volume_ma20, name="20 日均量", line={"color": "#60a5fa", "width": 2}), row=2, col=1)
+        beginner_note = "ATR 衡量平均波動幅度，不判斷漲跌方向；成交量高於均量代表交易較活躍，仍需搭配價格方向。"
+
+    if beginner_mode():
+        click_y = {
+            "布林通道": recent.close,
+            "RSI": recent.rsi14,
+            "MACD": recent.macd,
+            "KD": recent.kd_k,
+            "ATR 與量能": recent.atr14,
+        }[chart_type]
+        click_trace = go.Scatter(
+            x=recent.date, y=click_y, mode="markers", name="點選日期",
+            marker={"size": 20, "opacity": 0.015, "color": "#38bdf8"},
+            showlegend=False, hoverinfo="skip",
+        )
+        if chart_type == "ATR 與量能":
+            fig.add_trace(click_trace, row=1, col=1)
+        else:
+            fig.add_trace(click_trace)
+
+    style_technical_chart(fig, 500 if chart_type == "ATR 與量能" else 450)
+    if beginner_mode():
+        selected_points = plotly_events(
+            fig,
+            click_event=True,
+            select_event=False,
+            hover_event=False,
+            override_height=500 if chart_type == "ATR 與量能" else 450,
+            override_width="100%",
+            key=f"beginner-indicator-{chart_type}-{display_range}",
+        )
+        st.info(f"💡 {beginner_note}")
+        if selected_points:
+            selected_x = selected_points[-1].get("x")
+            if selected_x is not None:
+                selected_date = pd.to_datetime(selected_x).date()
+                matched = recent[pd.to_datetime(recent.date).dt.date == selected_date]
+                if not matched.empty:
+                    render_indicator_explanation(chart_type, matched.iloc[-1])
+        else:
+            st.caption("🖱️ 請直接點一下圖中的線、柱狀或日期位置，下方會顯示該日指標的補充解釋。")
+    else:
+        st.plotly_chart(fig, use_container_width=True, key=f"indicator-{chart_type}-{display_range}")
+
+
+def render_price_chart(prices: pd.DataFrame, display_range: str = "半年內") -> None:
+    recent = filter_chart_range(prices, display_range)
+    recent["change_pct"] = recent["close"].pct_change().mul(100)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25], vertical_spacing=0.04)
+    fig.add_trace(go.Candlestick(
+        x=recent.date, open=recent.open, high=recent.high, low=recent.low, close=recent.close, name="K 線",
+        increasing={"line": {"color": UP_COLOR, "width": 1.5}, "fillcolor": UP_COLOR},
+        decreasing={"line": {"color": DOWN_COLOR, "width": 1.5}, "fillcolor": DOWN_COLOR},
+        opacity=1,
+        customdata=recent[["change_pct"]].to_numpy(),
+        text=[
+            f"當日漲跌 {value:+.2f}%" if pd.notna(value) else "區間首日"
+            for value in recent["change_pct"]
+        ] if beginner_mode() else None,
+        hoverinfo="all",
+    ), row=1, col=1)
+    for period, color in ((20, "#f2c14e"), (60, "#4cc9f0")):
+        fig.add_trace(go.Scatter(
+            x=recent.date, y=recent[f"ma{period}"], name=f"MA{period}",
+            line={"width": 1.5, "color": color}
+        ), row=1, col=1)
+    volume_colors = [
+        UP_COLOR if close >= open_price else DOWN_COLOR
+        for open_price, close in zip(recent.open, recent.close)
+    ]
+    fig.add_trace(go.Bar(
+        x=recent.date, y=recent.volume, name="成交量",
+        marker={"color": volume_colors, "opacity": .62},
+    ), row=2, col=1)
+    if beginner_mode():
+        # Transparent close-price points make each candlestick easy to click/select
+        # while preserving the original candlestick appearance.
+        fig.add_trace(go.Scatter(
+            x=recent.date, y=recent.close, mode="markers", name="點選 K 棒",
+            marker={"size": 22, "opacity": 0.015, "color": "#38bdf8"},
+            selected={"marker": {"opacity": 0.95, "size": 16, "color": "#facc15"}},
+            unselected={"marker": {"opacity": 0.015}},
+            showlegend=False,
+            customdata=recent.index.to_numpy(), hoverinfo="skip",
+        ), row=1, col=1)
+    fig.update_layout(
+        height=560, xaxis_rangeslider_visible=False,
+        margin={"l": 62, "r": 22, "t": 44, "b": 36},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.01, "xanchor": "left", "x": 0},
+        hovermode="x unified",
+        clickmode="event+select",
+        selectionrevision="beginner-kbar-selection",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(15,23,42,.62)",
+        font={"color": "#dbeafe"},
+        hoverlabel={"bgcolor": "#0f172a", "font_color": "#f8fafc"},
+    )
+    fig.update_xaxes(
+        showgrid=True, gridcolor="rgba(148,163,184,.12)",
+        tickfont={"color": "#cbd5e1"},
+    )
+    fig.update_yaxes(
+        showgrid=True, gridcolor="rgba(148,163,184,.12)",
+        tickfont={"color": "#cbd5e1"}, separatethousands=True,
+    )
+    if beginner_mode():
+        selected_points = plotly_events(
+            fig,
+            click_event=True,
+            select_event=False,
+            hover_event=False,
+            override_height=560,
+            override_width="100%",
+            key="beginner-kbar-click-chart",
+        )
+    else:
+        st.plotly_chart(
+            fig, use_container_width=True, key="price-kbar-chart",
+            config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
+        )
+        selected_points = []
+    if beginner_mode():
+        st.caption("🔴 紅 K＝收盤高於開盤；🟢 綠 K＝收盤低於開盤。點一下 K 棒可看白話解讀；點擊不會改變分析結果。")
+        if selected_points:
+            point = selected_points[-1]
+            selected_x = point.get("x") if isinstance(point, dict) else getattr(point, "x", None)
+            if selected_x is not None:
+                selected_date = pd.to_datetime(selected_x).date()
+                matched = recent[pd.to_datetime(recent.date).dt.date == selected_date]
+                if not matched.empty:
+                    row = matched.iloc[-1]
+                    pattern, meaning = explain_kbar(row)
+                    day_change = float(row["change_pct"]) if pd.notna(row["change_pct"]) else 0.0
+                    with st.container(border=True):
+                        st.markdown(f"#### 🕯️ 點選的 K 棒：{selected_date:%Y-%m-%d}")
+
+                        st.markdown(f"**型態判讀：{pattern}**")
+                        values = st.columns(4)
+                        values[0].metric("開盤", f"{row.open:,.2f}")
+                        values[1].metric("最高", f"{row.high:,.2f}")
+                        values[2].metric("最低", f"{row.low:,.2f}")
+                        values[3].metric(
+                            "收盤", f"{row.close:,.2f}", f"{day_change:+.2f}%",
+                            delta_color="inverse",
+                        )
+                        st.info(f"這根 K 棒代表：{meaning}")
+                        st.caption("型態名稱是依單根 K 棒比例做的輔助辨識，不代表下一交易日必然上漲或下跌。")
+        else:
+            st.info("🖱️ 尚未選取 K 棒：請直接點一下圖中的任一根 K 棒，下方就會顯示該日型態解說。")
+
+
+def render_hot_list(provider: HybridTaiwanProvider) -> None:
+    st.subheader("市場熱門清單")
+    try:
+        hot = provider.get_hot_lists()
+    except Exception as exc:
+        st.warning(f"暫時無法取得市場排行：{exc}")
+        return
+    industries = sorted({stock.industry or "其他業" for stock in provider.search_stocks()})
+    selected_industry = st.selectbox(
+        "產業分類",
+        ["全部產業", *industries],
+        key="market_rank_industry",
+        help="排行先依成交量或漲跌幅產生，再顯示所選產業中的標的。",
+    )
+    columns = st.columns(3)
+    for column, key, title in zip(columns, ("volume", "gainers", "losers"), ("成交量排行", "漲幅排行", "跌幅排行")):
+        with column:
+            st.markdown(f"**{title}**")
+            ranking = hot[key]
+            if selected_industry != "全部產業":
+                ranking = [item for item in ranking if item.get("industry") == selected_industry]
+            if not ranking:
+                st.caption("此產業目前沒有進入前 50 名的標的。")
+            for item in ranking[:10]:
+                label = f"{item['code']} {item['name']}｜{item.get('industry', '其他業')}｜{item['change_pct']:+.2f}%"
+                if st.button(label, key=f"hot-{key}-{item['code']}", use_container_width=True):
+                    st.session_state.pending_stock = item["code"]
+                    st.rerun()
+
+
+def render_market_overview(provider: HybridTaiwanProvider) -> None:
+    st.subheader("台灣加權指數｜大盤趨勢")
+    st.caption("先看整體市場方向，再進入個股分析；大盤趨勢不代表每一檔股票都會同方向移動。")
+    refresh_market = st.button("重新整理大盤", key="refresh-market-index")
+    try:
+        prices, quote = provider.get_market_index(refresh=refresh_market)
+    except Exception as exc:
+        st.warning(f"暫時無法取得大盤資料：{exc}")
+        return
+    prices = add_indicators(prices)
+    latest = prices.iloc[-1]
+    above_ma20 = pd.notna(latest.ma20) and latest.close >= latest.ma20
+    above_ma60 = pd.notna(latest.ma60) and latest.close >= latest.ma60
+    if above_ma20 and above_ma60:
+        trend, trend_note = "偏多趨勢", "指數位於月線與季線之上，整體價格趨勢相對較強。"
+    elif not above_ma20 and not above_ma60:
+        trend, trend_note = "偏弱趨勢", "指數位於月線與季線之下，市場風險相對較高。"
+    else:
+        trend, trend_note = "震盪整理", "月線與季線訊號不同，市場方向尚未一致。"
+
+    metrics = st.columns(4)
+    metric_card(metrics[0], "加權指數", f"{quote.price:,.2f}", f"{quote.change_pct:+.2f}%", "漲跌幅")
+    metrics[1].metric("目前趨勢", trend)
+    metrics[2].metric("月線 MA20", f"{latest.ma20:,.2f}" if pd.notna(latest.ma20) else "資料不足")
+    metrics[3].metric("季線 MA60", f"{latest.ma60:,.2f}" if pd.notna(latest.ma60) else "資料不足")
+
+    recent = filter_chart_range(prices, "半年內")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=recent.date, y=recent.close, name="加權指數", line={"color": "#60a5fa", "width": 2.4}))
+    fig.add_trace(go.Scatter(x=recent.date, y=recent.ma20, name="MA20 月線", line={"color": "#facc15", "width": 1.7}))
+    fig.add_trace(go.Scatter(x=recent.date, y=recent.ma60, name="MA60 季線", line={"color": "#22d3ee", "width": 1.7}))
+    style_technical_chart(fig, 440)
+    st.plotly_chart(fig, use_container_width=True, key="market-index-trend")
+    if trend == "偏多趨勢":
+        st.success(f"大盤判讀：{trend_note}")
+    elif trend == "偏弱趨勢":
+        st.warning(f"大盤判讀：{trend_note}")
+    else:
+        st.info(f"大盤判讀：{trend_note}")
+    market_time = quote.meta.market_time.astimezone().strftime("%Y-%m-%d %H:%M") if quote.meta.market_time else "時間未知"
+    st.caption(f"行情時間：{market_time}｜資料來源：{quote.meta.source}｜僅供市場環境參考")
+
+
+def render_opportunity_scan(provider: HybridTaiwanProvider, horizon: str, risk_profile: str) -> None:
+    st.subheader("近期值得關注的候選")
+    st.caption("候選來自官方成交量與漲幅排行，再以技術、基本、籌碼與風險資料重新評分；不是保證上漲清單。")
+    if "scan_horizon" not in st.session_state:
+        st.session_state.scan_horizon = "波段"
+    if "_previous_scan_horizon" not in st.session_state:
+        st.session_state._previous_scan_horizon = st.session_state.scan_horizon
+    industry_options = ["全部產業", *sorted({
+        stock.industry or "其他業" for stock in provider.search_stocks()
+    })]
+    if "scan_industry" not in st.session_state:
+        st.session_state.scan_industry = "全部產業"
+    if "_previous_scan_industry" not in st.session_state:
+        st.session_state._previous_scan_industry = st.session_state.scan_industry
+    with st.container(border=True):
+        selected_horizon = st.segmented_control(
+            "投資週期",
+            options=["短線", "波段", "中長期"],
+            format_func={"短線": "短期投資", "波段": "中期投資", "中長期": "長期投資"}.get,
+            key="scan_horizon",
+            help="短期約 1–10 日；中期約 1–3 個月；長期約 6–24 個月。",
+        )
+        if selected_horizon != st.session_state._previous_scan_horizon:
+            st.session_state.pop("opportunity_results", None)
+            st.session_state._previous_scan_horizon = selected_horizon
+        horizon = selected_horizon or "波段"
+        range_text = {
+            "短線": "1–10 個交易日｜技術與籌碼權重較高",
+            "波段": "1–3 個月｜技術、基本與籌碼均衡",
+            "中長期": "6–24 個月｜基本面與風險權重較高",
+        }[horizon]
+        st.markdown(f'<div class="result-count">目前選擇：{range_text}</div>', unsafe_allow_html=True)
+        control_industry, control_count, control_action = st.columns([1.45, 1.7, 1])
+        selected_industry = control_industry.selectbox(
+            "產業分類",
+            industry_options,
+            key="scan_industry",
+        )
+        if selected_industry != st.session_state._previous_scan_industry:
+            st.session_state.pop("opportunity_results", None)
+            st.session_state._previous_scan_industry = selected_industry
+        max_candidates = control_count.select_slider(
+            "最多顯示筆數", options=[10, 20, 30, 40, 50], value=20,
+            key="scan_max_candidates",
+        )
+        start_scan = control_action.button(
+            "開始掃描",
+            type="primary",
+            use_container_width=True,
+            key="start-opportunity-scan",
+        )
+    if start_scan:
+        hot = provider.get_hot_lists(refresh=True)
+        candidates = []
+        for item in hot["volume"] + hot["gainers"]:
+            if selected_industry != "全部產業" and item.get("industry") != selected_industry:
+                continue
+            if item["code"] not in candidates:
+                candidates.append(item["code"])
+            if len(candidates) >= max_candidates:
+                break
+        progress = st.progress(0, text="正在分析候選標的…")
+
+        results = []
+        for index, code in enumerate(candidates):
+            try:
+                results.append(analyze_stock(
+                    provider, StockAnalysisRequest(code, horizon, risk_profile)
+                ))
+            except Exception:
+                pass
+            progress.progress((index + 1) / len(candidates), text=f"已分析 {index + 1}/{len(candidates)}")
+        progress.empty()
+        st.session_state.opportunity_results = sorted(
+            results, key=lambda x: (x.confidence >= 60, x.overall_score), reverse=True
+        )
+        st.session_state.opportunity_results_horizon = horizon
+        st.session_state.opportunity_results_industry = selected_industry
+    results = st.session_state.get("opportunity_results", [])
+    if not results:
+        st.info(f"已切換至{range_text}。按下「開始掃描」後，系統會依這個週期重新評分候選。")
+        return
+    st.markdown(
+        f'<div class="result-count">本次找到 {len(results)} 檔候選｜產業：{selected_industry}｜分析週期：{range_text}</div>',
+        unsafe_allow_html=True,
+    )
+    scan_headers = st.columns([2.4, 1.4, 1.7, 1])
+    for col, label, align in zip(
+        scan_headers, ("標的與建議", "分數／信心", "參考布局區", "操作"), ("", "right", "right", "")
+    ):
+        col.markdown(f'<div class="portfolio-head {align}">{label}</div>', unsafe_allow_html=True)
+    for result in results:
+        with st.container(border=True):
+            c1, c2, c3, c4 = st.columns([2.4, 1.4, 1.7, 1])
+            css_class, level = advice_level(result.signal)
+            icon = {"advice-green": "🟢", "advice-yellow": "🟡", "advice-red": "🔴"}[css_class]
+            c1.markdown(
+                f'<div class="portfolio-cell portfolio-name">{icon} {result.stock.code} {result.stock.name}'
+                f'<br><span class="small-muted">{result.stock.industry or "其他業"}</span>'
+                f'<br><span class="small-muted">{result.signal}</span></div>', unsafe_allow_html=True,
+            )
+            c2.markdown(
+                f'<div class="portfolio-cell right">{result.overall_score:.0f} 分'
+                f'<br><span class="small-muted">信心 {result.confidence:.0f}%</span></div>', unsafe_allow_html=True,
+            )
+            c3.markdown(
+                f'<div class="portfolio-cell right">{result.watch_low:.2f}–{result.watch_high:.2f}</div>',
+                unsafe_allow_html=True,
+            )
+            if c4.button("加入清單", key=f"scan-add-{result.stock.code}"):
+                get_portfolio_store().upsert(PortfolioItem(result.stock.code, 0, 0, "近期關注"))
+                st.toast(f"已加入 {result.stock.code}")
+
+
+def previous_weekday(value):
+    day = value - timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    return day
+
+
+def render_dividend_calendar(provider: HybridTaiwanProvider, analyzed) -> None:
+    now = datetime.now().astimezone()
+    rows = []
+    warnings = []
+    for item, result, *_ in analyzed:
+        if item.shares <= 0 or result is None:
+            continue
+        try:
+            events = provider.get_dividend_events(result.stock)
+        except Exception as exc:
+            warnings.append(f"{item.code}：{exc}")
+            continue
+        relevant = [
+            event for event in events
+            if event.ex_dividend_date is None
+            or event.ex_dividend_date.year >= now.year - 1
+        ][:6]
+        for event in relevant:
+            ex_date = event.ex_dividend_date
+            last_holding = previous_weekday(ex_date) if ex_date else None
+            if ex_date and ex_date > now:
+                eligibility = f"需於 {last_holding:%Y-%m-%d} 收盤前持有"
+            elif ex_date:
+                eligibility = "若除息日前已持有，通常具領息資格"
+            else:
+                eligibility = "等待除息日公告"
+            rows.append({
+                "代碼": item.code,
+                "名稱": result.stock.name,
+                "持有股數": item.shares,
+                "每股現金股利": event.cash_per_share,
+                "預估稅前股息": item.shares * event.cash_per_share,
+                "除息日": ex_date.strftime("%Y-%m-%d") if ex_date else "待公告",
+                "最後持有參考日": last_holding.strftime("%Y-%m-%d") if last_holding else "待公告",
+                "預計發放／入帳日": event.payment_date.strftime("%Y-%m-%d") if event.payment_date else "待公司／投信公告",
+                "資格說明": eligibility,
+                "狀態": event.status,
+                "來源": event.source,
+            })
+    st.markdown("### 股息摘要")
+    current_rows = [
+        row for row in rows
+        if row["除息日"] == "待公告" or row["除息日"].startswith(str(now.year))
+    ]
+    estimated = sum(row["預估稅前股息"] for row in current_rows)
+    c1, c2, c3 = st.columns(3)
+    c1.metric(f"{now.year} 年目前可查股息", f"${estimated:,.0f}")
+    c2.metric("有股息資料標的", len({row["代碼"] for row in rows}))
+    c3.metric("待公告入帳日", sum(row["預計發放／入帳日"] == "待公司／投信公告" for row in rows))
+    st.caption("金額為每股現金股利 × 目前記錄股數的稅前估算；實際資格以除息基準、持股紀錄、稅務及公司／投信公告為準。")
+    if not rows:
+        st.info("目前持股尚未找到近期股息公告或除息紀錄。")
+    else:
+        table = pd.DataFrame(rows)
+        st.dataframe(
+            table,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "每股現金股利": st.column_config.NumberColumn(format="$%.4f"),
+                "預估稅前股息": st.column_config.NumberColumn(format="$%.0f"),
+                "持有股數": st.column_config.NumberColumn(format="%.0f"),
+            },
+        )
+    if warnings:
+        with st.expander("部分資料取得失敗"):
+            for warning in warnings:
+                st.write(f"• {warning}")
+    st.info("官方 OpenAPI 並非每一筆都提供現金發放日；未公告時會顯示待公告，不以固定天數推測入帳。")
+
+
+def render_portfolio(provider: HybridTaiwanProvider, horizon: str, risk_profile: str) -> None:
+    store = get_portfolio_store()
+    st.subheader("我的組合清單")
+    st.caption("先看總覽與顏色，再展開需要處理的標的；詳細價位與編輯欄位預設收合。")
+    with st.expander("＋ 新增股票或 ETF"):
+        with st.form("portfolio-add-form", clear_on_submit=True):
+            c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+            code = c1.text_input("股票／ETF 代碼")
+            shares = c2.number_input("股數", min_value=0.0, step=100.0)
+            cost = c3.number_input("平均成本", min_value=0.0, step=1.0)
+            note = c4.text_input("備註")
+            submitted = st.form_submit_button("加入組合")
+            if submitted:
+                try:
+                    provider.get_stock(code.strip())
+                    store.upsert(PortfolioItem(code.strip(), shares, cost, note))
+                    st.success(f"已保存 {code.strip()}")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"無法加入：{exc}")
+    items = store.list()
+
+    analyzed = []
+    for item in items:
+        try:
+            result = analyze_stock(provider, StockAnalysisRequest(item.code, horizon, risk_profile))
+            action, reason = holding_action(result, item.average_cost)
+            css_class, level = advice_level(action)
+            analyzed.append((item, result, action, reason, css_class, level))
+        except Exception as exc:
+            analyzed.append((item, None, "暫時無法分析", str(exc), "advice-yellow", "資料異常"))
+
+    held = [row for row in analyzed if row[0].shares > 0]
+    market_value = sum(row[0].shares * row[1].quote.price for row in held if row[1])
+    total_cost = sum(row[0].shares * row[0].average_cost for row in held)
+    pnl = market_value - total_cost
+    status_counts = {
+        "green": sum(row[4] == "advice-green" for row in held),
+        "yellow": sum(row[4] == "advice-yellow" for row in held),
+        "red": sum(row[4] == "advice-red" for row in held),
+    }
+    summary_finance = st.columns(3)
+    summary_finance[0].metric("持有市值", f"${market_value:,.0f}")
+    summary_finance[1].metric("投入成本", f"${total_cost:,.0f}")
+    summary_finance[2].metric(
+        "未實現損益",
+        f"${pnl:,.0f}",
+        f"{pnl / total_cost:+.1%}" if total_cost else None,
+        delta_color="inverse",
+    )
+    summary_status = st.columns(3)
+    summary_status[0].metric("🟢 建議較高", status_counts["green"])
+    summary_status[1].metric("🟡 觀察", status_counts["yellow"])
+    summary_status[2].metric("🔴 優先處理", status_counts["red"])
+
+    held_tab, watch_tab, dividend_tab = st.tabs([
+        f"持有（{len(held)}）",
+        f"關注（{sum(row[0].shares == 0 for row in analyzed)}）",
+        "股息行事曆",
+    ])
+
+    def render_items(target, holding: bool):
+        subset = [row for row in analyzed if (row[0].shares > 0) == holding]
+        with target:
+            section_label = "持有部位" if holding else "關注清單"
+            section_hint = "市值與損益依最新可用價格估算" if holding else "尚未計入持有部位與總成本"
+            st.markdown(
+                f'<div class="portfolio-section-title"><b>{section_label}</b><span>{section_hint}</span></div>',
+                unsafe_allow_html=True,
+            )
+            if not subset:
+                st.info("目前沒有資料。")
+            else:
+                headers = st.columns([2.2, 1.25, 1.75, 1.4])
+                for col, label, align in zip(
+                    headers,
+                    ("股票", "現價／報酬", "持有股數／平均成本", "部位市值"),
+                    ("", "right", "right", "right"),
+                ):
+                    col.markdown(
+                        f'<div class="portfolio-head {align}">{label}</div>',
+                        unsafe_allow_html=True,
+                    )
+            for item, result, action, reason, css_class, level in subset:
+                if result is None:
+                    with st.expander(f"🟡 {item.code}｜暫時無法分析"):
+                        st.warning(reason)
+                    continue
+                gain = result.quote.price / item.average_cost - 1 if item.average_cost else None
+                icon = {"advice-green": "🟢", "advice-yellow": "🟡", "advice-red": "🔴"}[css_class]
+                gain_text = f"{gain:+.1%}" if gain is not None else "未設定成本"
                 market_value = item.shares * result.quote.price
                 with st.container(border=True):
                     cells = st.columns([2.2, 1.25, 1.75, 1.4])
@@ -466,6 +1205,7 @@ with st.sidebar:
     pages = [
         ("🌐", "大盤趨勢"), ("📊", "智慧分析"), ("✨", "近期關注"), ("💼", "我的組合"),
         ("🔥", "市場排行"), ("ℹ️", "使用說明"),
+
     ]
     if "active_page" not in st.session_state:
         st.session_state.active_page = "大盤趨勢"
@@ -616,6 +1356,7 @@ tabs = st.tabs(["綜合判斷", "技術分析", "基本籌碼", "歷史驗證", 
 with tabs[0]:
     st.markdown("### 理性數據綜合建議")
     if result.signal.startswith("偏多"):
+
         recommendation = "可列入分批布局觀察，但不建議追價；以觀察區與失效價管理風險。"
     elif "觀望" in result.signal:
         recommendation = "目前先觀望，等待趨勢、動能或基本數據改善後再重新評估。"
@@ -766,6 +1507,7 @@ with tabs[5]:
     for meta in result.data_status:
         rows.append({
             "資料來源": meta.source,
+
             "市場時間": meta.market_time.isoformat() if meta.market_time else "未提供",
             "擷取時間": meta.fetched_at.isoformat(),
             "是否降級／過期": "是" if meta.is_stale else "否",
@@ -777,3 +1519,4 @@ with tabs[5]:
 st.divider()
 render_hot_list(provider)
 st.caption("本系統僅供研究與模擬，不構成投資建議；請自行評估財務狀況、投資目標與風險承受能力。")
+
