@@ -1,0 +1,779 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import streamlit as st
+import streamlit.components.v1 as components
+from streamlit_plotly_events import plotly_events
+
+from twstock_lab.analysis import analyze_stock
+from twstock_lab.backtest import BacktestConfig, monte_carlo, run_backtest
+from twstock_lab.indicators import add_indicators
+from twstock_lab.models import StockAnalysisRequest
+from twstock_lab.market_clock import market_clock
+from twstock_lab.portfolio import PortfolioItem, PortfolioStore, SessionPortfolioStore, holding_action
+from twstock_lab.providers import HybridTaiwanProvider
+from twstock_lab.statistics import win_rate_test
+
+UP_COLOR = "#ff4d4f"
+DOWN_COLOR = "#22c55e"
+
+st.set_page_config(page_title="台股智慧分析室", page_icon="📈", layout="wide")
+st.markdown("""
+<style>
+.stApp {
+  background:
+    radial-gradient(circle at 10% 10%, rgba(46, 196, 182, .16), transparent 30%),
+    radial-gradient(circle at 90% 5%, rgba(59, 130, 246, .18), transparent 32%),
+    linear-gradient(135deg, #09111f 0%, #111b2e 52%, #0a1222 100%);
+}
+[data-testid="stSidebar"] {
+  background: rgba(10, 20, 36, .72);
+  backdrop-filter: blur(20px);
+  border-right: 1px solid rgba(255,255,255,.10);
+}
+[data-testid="stSidebar"] h2 {
+  margin-bottom:.1rem !important;
+  font-size:1.35rem !important;
+}
+.st-key-sidebar_nav [data-testid="stVerticalBlock"] {
+  gap:.55rem !important;
+}
+.st-key-sidebar_nav .stButton > button {
+  width:100%;
+  min-height:52px;
+  max-height:52px;
+  padding:.55rem .9rem;
+  border-radius:14px;
+  justify-content:flex-start;
+  background:rgba(255,255,255,.045);
+  border-color:rgba(148,163,184,.28);
+  box-shadow:none;
+  transition:transform .16s ease, background .16s ease, border-color .16s ease;
+}
+.st-key-sidebar_nav .stButton > button:hover {
+  transform:translateX(3px);
+  background:rgba(56,189,248,.12);
+  border-color:rgba(125,211,252,.55);
+}
+.st-key-sidebar_nav .stButton > button[kind="primary"] {
+  background:linear-gradient(100deg,rgba(14,165,233,.28),rgba(99,102,241,.22));
+  border-color:rgba(125,211,252,.65);
+  box-shadow:inset 3px 0 0 #38bdf8,0 8px 22px rgba(2,132,199,.12);
+}
+.st-key-sidebar_nav .stButton p {
+  width:100%;
+  text-align:left;
+  font-size:1rem;
+  font-weight:700;
+  white-space:nowrap;
+}
+[data-testid="stAppViewContainer"] > .main .block-container {
+  max-width: 1380px;
+  padding-top: 1.35rem;
+  padding-bottom: 4rem;
+}
+[data-testid="stAppViewContainer"] > .main [data-testid="stVerticalBlock"] {gap:.85rem;}
+[data-testid="stHorizontalBlock"] {align-items:stretch;}
+h1 {font-size:clamp(2.1rem, 4vw, 3.5rem) !important; line-height:1.08 !important;}
+h2 {font-size:clamp(1.5rem, 2.4vw, 2rem) !important;}
+h3 {font-size:clamp(1.15rem, 1.8vw, 1.5rem) !important;}
+[data-testid="stMetric"], [data-testid="stVerticalBlockBorderWrapper"] {
+  background: rgba(255,255,255,.065);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 18px;
+  box-shadow: 0 12px 35px rgba(0,0,0,.16);
+  backdrop-filter: blur(18px);
+}
+[data-testid="stMetric"] {
+  height:118px;
+  min-height:118px;
+  padding:12px 14px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+[data-testid="stMetricLabel"] {min-height:1.55rem;}
+[data-testid="column"] {min-width:0;}
+[data-baseweb="tab-list"] {gap:.35rem; overflow-x:auto; scrollbar-width:thin;}
+[data-baseweb="tab"] {min-height:44px; white-space:nowrap; padding-left:1rem; padding-right:1rem;}
+[data-testid="stSegmentedControl"] {
+  padding:.3rem; border-radius:14px;
+  background:rgba(255,255,255,.045);
+  border:1px solid rgba(148,163,184,.18);
+}
+[data-testid="stSegmentedControl"] button {min-height:42px;}
+[data-testid="stCaptionContainer"] {line-height:1.45;}
+[data-testid="stForm"] {border-radius:16px; border:1px solid rgba(255,255,255,.10); padding:1rem;}
+[data-testid="stExpander"] {border-radius:14px !important; overflow:hidden;}
+[data-testid="stToggle"] {
+  padding:.7rem 1rem;
+  border:1px solid rgba(125,211,252,.28);
+  border-radius:16px;
+  background:linear-gradient(90deg,rgba(14,165,233,.12),rgba(99,102,241,.10));
+  backdrop-filter:blur(14px);
+}
+[data-testid="stToggle"] label {font-weight:700;}
+.st-key-beginner_assist [data-testid="stCheckbox"] {
+  width:100%;
+  min-height:64px;
+  padding:.75rem .65rem;
+  border-radius:18px;
+  background:linear-gradient(90deg,rgba(14,165,233,.12),rgba(99,102,241,.10));
+  border:1px solid rgba(125,211,252,.28);
+}
+.st-key-beginner_assist [data-testid="stCheckbox"] > label {
+  min-height:40px;
+  align-items:center;
+}
+.st-key-beginner_assist [data-testid="stCheckbox"] > label > div:nth-of-type(1) {
+  transform:scale(1.5);
+  transform-origin:left center;
+  margin-right:16px;
+  flex-shrink:0;
+}
+.st-key-beginner_assist [data-testid="stWidgetLabel"] {
+  align-items:center;
+  gap:.45rem;
+}
+.st-key-beginner_assist [data-testid="stWidgetLabel"] p {
+  font-size:21px !important;
+  line-height:1.3 !important;
+  font-weight:800 !important;
+  white-space:normal !important;
+}
+.st-key-beginner_assist [data-testid="stTooltipIcon"],
+.st-key-beginner_assist [data-testid="stTooltipHoverTarget"] {
+  width:24px !important;
+  height:24px !important;
+}
+.st-key-beginner_assist [data-testid="stTooltipIcon"] svg {
+  width:24px !important;
+  height:24px !important;
+}
+.beginner-strip {
+  padding:12px 16px; margin:6px 0 14px; border-radius:14px;
+  color:#dbeafe; background:rgba(30,64,175,.16);
+  border:1px solid rgba(96,165,250,.32);
+}
+.stButton > button {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.15);
+  background: rgba(255,255,255,.07);
+}
+.advice-card {padding: 16px 18px; border-radius: 16px; margin: 8px 0; backdrop-filter: blur(14px);}
+.advice-green {background: rgba(16,185,129,.16); border: 1px solid rgba(52,211,153,.6);}
+.advice-yellow {background: rgba(245,158,11,.16); border: 1px solid rgba(251,191,36,.65);}
+.advice-red {background: rgba(239,68,68,.16); border: 1px solid rgba(248,113,113,.65);}
+.small-muted {opacity:.72; font-size:.88rem;}
+.portfolio-head {font-size:.78rem; opacity:.62; padding:2px 4px 6px; white-space:nowrap;}
+.portfolio-cell {padding:7px 4px 2px; line-height:1.25; white-space:nowrap;}
+.portfolio-cell.right {text-align:right; font-variant-numeric:tabular-nums;}
+.portfolio-name {font-weight:700; overflow:hidden; text-overflow:ellipsis;}
+.portfolio-action {font-size:.86rem; overflow:hidden; text-overflow:ellipsis;}
+.portfolio-section-title {
+  display:flex; align-items:center; justify-content:space-between;
+  margin:.2rem 0 .65rem; color:#e2e8f0;
+}
+.portfolio-section-title span {font-size:.82rem; opacity:.65; font-weight:400;}
+.portfolio-card-meta {
+  margin-top:.55rem; padding:.65rem .8rem; border-radius:12px;
+  font-size:.9rem; line-height:1.45;
+}
+.portfolio-card-meta.advice-green {background:rgba(16,185,129,.12);}
+.portfolio-card-meta.advice-yellow {background:rgba(245,158,11,.12);}
+.portfolio-card-meta.advice-red {background:rgba(239,68,68,.12);}
+.portfolio-card-meta .reason {display:block; margin-top:.18rem; opacity:.76; font-size:.82rem;}
+.portfolio-card-meta .level {font-weight:750;}
+.result-count {
+  padding:.45rem .7rem; border-radius:10px;
+  background:rgba(56,189,248,.08); border:1px solid rgba(125,211,252,.18);
+  color:#bae6fd; font-size:.84rem;
+}
+.trend-card {
+  padding:14px 16px; border-radius:15px; margin:.2rem 0 .7rem;
+  line-height:1.55; backdrop-filter:blur(14px);
+}
+.trend-card .title {font-size:1.08rem; font-weight:800;}
+.trend-card .detail {margin-top:.22rem; font-size:.88rem; opacity:.82;}
+.trend-bull {background:rgba(239,68,68,.13); border:1px solid rgba(248,113,113,.5);}
+.trend-bear {background:rgba(34,197,94,.13); border:1px solid rgba(74,222,128,.5);}
+.trend-neutral {background:rgba(245,158,11,.13); border:1px solid rgba(251,191,36,.5);}
+@media (min-width: 900px) {
+  [data-testid="stSidebar"] {width:320px !important; min-width:320px !important; max-width:320px !important;}
+  [data-testid="stSidebar"] > div:first-child {width:320px !important;}
+}
+@media (max-width: 899px) {
+  [data-testid="stAppViewContainer"] > .main .block-container {padding-left:1rem; padding-right:1rem;}
+  .portfolio-head {display:none;}
+  .portfolio-cell {white-space:normal; font-size:.88rem;}
+  [data-testid="stMetric"] {height:108px; min-height:108px; padding:10px 12px;}
+  [data-testid="stSegmentedControl"] {overflow-x:auto;}
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+@st.cache_resource
+def get_provider() -> HybridTaiwanProvider:
+    return HybridTaiwanProvider()
+
+
+def public_demo_mode() -> bool:
+    try:
+        host = str(st.context.headers.get("Host", "")).lower()
+    except Exception:
+        host = ""
+    try:
+        configured = bool(st.secrets.get("PUBLIC_DEMO_MODE", False))
+    except Exception:
+        configured = False
+    return configured or host.endswith(".streamlit.app")
+
+
+@st.cache_resource
+def get_local_portfolio_store() -> PortfolioStore:
+    return PortfolioStore()
+
+
+def get_portfolio_store():
+    if public_demo_mode():
+        return SessionPortfolioStore(st.session_state)
+    return get_local_portfolio_store()
+
+
+def money(value: float) -> str:
+    return f"{value:,.2f}"
+
+
+BEGINNER_HELP = {
+    "最新價": "目前最近一筆成交價格。盤中會變動；收盤後則是最近收盤價。",
+    "漲跌幅": "相較前一交易日收盤價的變動百分比。例如 +2% 代表每 100 元上漲約 2 元；-2% 則下跌約 2 元。",
+    "成交量": "今天成交的股票數量；台股介面常用「張」，1 張通常等於 1,000 股。ETF 亦通常以張呈現。",
+    "綜合分數": "系統把技術、基本、籌碼與風險資料換算成 0–100 分；分數越高只代表條件相對較有利，不保證上漲。",
+    "資料信心度": "衡量資料完整度與新鮮度，不是上漲機率。缺資料或行情過期時會降低。",
+    "技術面": "從價格、趨勢、成交量及 RSI、MACD 等指標觀察市場行為。",
+    "基本面": "從營收、獲利、估值等資料觀察公司體質與價格是否合理。",
+    "籌碼面": "觀察外資、投信、自營商等市場參與者近期買賣方向。",
+    "風險面": "綜合波動、回撤、流動性與估值風險；本系統已轉換為越高越穩健的分數。",
+    "RSI(14)": "相對強弱指標，觀察近 14 日漲跌動能。常見解讀是高於 70 偏熱、低於 30 偏弱，但不能單獨當作買賣依據。",
+    "MACD": "用不同速度的移動平均線觀察趨勢與動能；數值轉正或黃金交叉常被視為轉強訊號，但也可能落後價格。",
+    "KD-K": "KD 指標中反應較快的 K 值，常用來觀察短期價格位置與轉折。",
+    "KD-D": "KD 指標中較平滑的 D 值；K 向上穿越 D 常稱黃金交叉，向下穿越則稱死亡交叉。",
+    "ATR(14)": "近 14 日的平均真實波幅，用來衡量價格波動大小；數值越大通常代表波動與停損空間也較大。",
+    "本益比": "股價相對每股盈餘的倍數，常用來看市場願意為獲利支付多高價格；不同產業不宜直接硬比。",
+    "股價淨值比": "股價相對每股淨值的倍數，常用於金融、資產型公司等；低不一定便宜，高也不一定昂貴。",
+    "殖利率": "每股現金股利 ÷ 股價的比例；是歷史或預估參考，不代表未來一定發放相同股利。",
+    "月營收年增": "本月營收與去年同月相比的成長率，可降低季節性干擾，但營收成長不一定等於獲利成長。",
+    "MA20": "20 日移動平均線，約代表近一個月交易日的平均收盤價，台股常稱「月線」。",
+    "MA60": "60 日移動平均線，約代表近一季交易日的平均收盤價，台股常稱「季線」。",
+    "布林通道": "由移動平均線與價格標準差形成上、中、下三條軌道，用來觀察價格相對位置與波動擴張或收縮。",
+    "成交量均線": "一段期間的平均成交量；目前成交量高於均量，代表交易比近期平均活躍。",
+}
+
+
+def beginner_mode() -> bool:
+    return bool(st.session_state.get("beginner_assist", False))
+
+
+def metric_card(container, label: str, value, delta=None, term: str | None = None) -> None:
+    help_text = BEGINNER_HELP.get(term or label) if beginner_mode() else None
+    container.metric(
+        label,
+        value,
+        delta,
+        help=help_text,
+        delta_color="inverse" if delta is not None else "normal",
+    )
+
+
+def render_beginner_guide() -> None:
+    st.markdown(
+        '<div class="beginner-strip">💡 新手輔助已開啟：將滑鼠移到指標名稱旁的「?」即可看白話解釋；'
+        'K 線圖移到任一根 K 棒，可查看當日點位與漲跌幅。</div>',
+        unsafe_allow_html=True,
+    )
+    with st.expander("📖 常用盤中術語與交易時間", expanded=False):
+        st.markdown("""
+| 術語 | 白話說明 |
+|---|---|
+| **點／點位** | 股票通常稱「股價」或「元」；「大盤上漲 100 點」才常稱為點。個股從 100 元漲到 102 元，通常說「漲 2 元、漲 2%」。 |
+| **漲跌幅** | `(目前價格－昨收價) ÷ 昨收價 × 100%`。台股一般股票單日漲跌幅多為 ±10%，但新上市、恢復交易等情況可能例外。 |
+| **開盤價** | 當天第一筆撮合成交價；不一定等於前一天收盤價。 |
+| **盤中** | 一般指正常交易進行中的時間，台股集中市場通常為交易日 **09:00–13:30**。 |
+| **早盤** | 開盤後的前一段時間，市場慣用說法，沒有唯一法定分界；通常約指 **09:00–10:30**。 |
+| **盤中段** | 市場慣用說法，通常約指 **10:30–12:30**。 |
+| **尾盤／盤尾** | 接近收盤的最後一段，通常約指 **12:30–13:30**；最後幾分鐘的價格可能較活躍。 |
+| **收盤價** | 正常交易結束時形成的當日最後成交價。 |
+| **紅／綠** | 台股慣例是紅色代表上漲、綠色代表下跌；本系統的建議燈號另採綠＝較高、黃＝觀察、紅＝優先處理。 |
+| **一張** | 台股股票通常 1 張＝1,000 股；不足一張稱為零股。 |
+| **多頭／偏多** | 買方力量較強或看法偏向上漲；不等於接下來一定會漲。 |
+| **空頭／偏空** | 賣方力量較強或看法偏向下跌；「放空」則是先賣後買的交易方式，風險較高。 |
+| **利多／利空** | 可能有利／不利價格的消息或因素；消息公布後，價格不一定照直覺反應。 |
+| **盤整** | 價格在一段區間內來回，還沒有明顯上漲或下跌趨勢。 |
+| **支撐／壓力** | 過去較容易止跌／遇到賣壓的位置，是觀察區而非保證不會跌破或突破。 |
+| **停損／停利** | 事先設定判斷失效時退出，或達到目標時分批落袋；重點是控制風險與執行紀律。 |
+| **除息** | 股票扣除現金股利價值的參考日；在除息日前一交易日持有，通常才有資格參與該次配息。 |
+        """)
+        st.caption("時段名稱中的早盤、盤中段、尾盤屬市場慣用語；實際交易與特殊商品時段仍以交易所公告為準。")
+    with st.expander("📈 技術分析導讀與常見型態", expanded=False):
+        st.markdown("""
+**技術分析在看什麼？**
+
+技術分析主要整理歷史價格、成交量和市場交易行為；基本面則著重公司的營收、獲利、財務與估值。兩者回答的問題不同，可以互相補充。
+
+**新手可以照這個順序看**
+
+1. **先看基本面與商品性質**：確認自己買的是個股或 ETF，公司／商品做什麼、資料是否完整，先回答「值不值得持續研究」。
+2. **再看大方向**：用 MA20、MA60 判斷目前偏上升、下降或盤整，避免只因一天紅 K 就認定趨勢翻多。
+3. **標示支撐、壓力與失效位置**：先決定判斷錯誤時如何退出，再考慮可能的進場區與目標。
+4. **觀察 K 線與成交量**：確認突破、跌破或轉折是否伴隨較活躍的成交量；量能只代表活躍，不保證方向。
+5. **最後用 RSI、MACD、KD 輔助確認**：指標互相矛盾時應降低信心，不需要為了買進而挑選最樂觀的單一指標。
+
+| 類別 | 白話解釋 | 本系統 |
+|---|---|---|
+| **趨勢** | 價格大致可分為上升、下降或橫向盤整；不要因單日漲跌就認定趨勢改變。 | MA20、MA60 與 K 線 |
+| **成交量** | 反映交易活躍程度。價漲量增、價跌量增代表的市場力道不同，需與價格一起看。 | 成交量、20 日均量 |
+| **支撐／壓力** | 過去較容易止跌或遇到賣壓的價格區域，不是一條保證有效的精準價位。 | 觀察區、目標與失效參考 |
+| **K 線分析** | 一根 K 棒濃縮一段時間的開、高、低、收，呈現當期多空交戰結果。 | 可直接點選日 K 查看解說 |
+| **型態分析** | 觀察多根 K 棒組成的形狀；型態通常要等突破或跌破關鍵位置才算確認。 | 提供名詞導讀，不自動宣稱型態成立 |
+| **技術指標** | 把價格或成交量轉成數學指標，協助比較趨勢、動能和波動。 | RSI、MACD、KD、ATR、布林通道 |
+
+**常見圖形型態**
+
+| 名稱 | 辨識概念 | 新手注意 |
+|---|---|---|
+| **頭肩頂** | 三個高峰，中間較高；連接兩側低點的線常稱頸線。 | 未跌破頸線前，不宜只看外形就判定反轉。 |
+| **雙重頂／M 頭** | 價格兩次挑戰相近高點未能站穩。 | 通常要再觀察是否跌破兩峰之間的低點。 |
+| **圓弧頂** | 價格由上升逐漸轉平，再緩慢走弱。 | 形成時間較長，主觀辨識差異也較大。 |
+| **三角收斂** | 高低波動範圍逐漸縮小。 | 只代表力量收斂，向上或向下突破前方向未知。 |
+| **箱型整理** | 價格在相對固定的上、下邊界間來回。 | 假突破常見，需搭配收盤位置與成交量確認。 |
+
+**其他常見工具**
+
+- **趨勢線**：連接一系列高點或低點，用來輔助觀察方向與可能的支撐壓力。
+- **斐波那契回撤**：用 23.6%、38.2%、50%、61.8% 等比例標示潛在回撤位置；這些只是觀察區，不是自然法則。
+- **黃金交叉／死亡交叉**：較快的線向上／向下穿越較慢的線。交叉通常落後價格，不能保證後續方向。
+
+> 技術分析源自歷史資料，無法事先知道財報意外、政策、戰爭或其他突發事件；不同人畫出的趨勢線與型態也可能不同。應搭配基本面、籌碼、風險控管與部位規劃。
+
+[延伸閱讀：量化通技術分析教學懶人包](https://quantpass.org/technical-analysis-lists/)
+
+[延伸閱讀：永豐金證券技術分析與基本面搭配](https://www.sinotrade.com.tw/richclub/hotstock/%E6%8A%80%E8%A1%93%E5%88%86%E6%9E%90%E6%95%99%E5%AD%B8%E6%87%B6%E4%BA%BA%E5%8C%85-%E6%8A%80%E8%A1%93%E5%88%86%E6%9E%90%E7%9C%9F%E7%9A%84%E6%9C%89%E7%94%A8%E5%97%8E-%E8%88%87%E5%9F%BA%E6%9C%AC%E9%9D%A2%E6%80%8E%E9%BA%BC%E6%90%AD%E9%85%8D-%E7%94%A8-%E6%93%8D%E7%9B%A4%E5%BF%85%E4%BF%AE%E8%AA%B2-%E5%AF%A6%E6%88%B0%E6%A1%88%E4%BE%8B%E8%AE%93%E4%BD%A0%E6%87%82--686f51d7532fa101531fe407)
+        """)
+
+
+def advice_level(action: str) -> tuple[str, str]:
+    if any(word in action for word in ("退出", "緊急", "減碼，暫不", "偏空")):
+        return "advice-red", "需優先處理"
+    if any(word in action for word in ("可評估分批補入", "偏多", "續抱／")):
+        return "advice-green", "建議度較高"
+    return "advice-yellow", "警戒／持續觀察"
+
+
+def render_market_clocks() -> None:
+    clocks = [market_clock("台股"), market_clock("美股")]
+    blocks = []
+    for clock in clocks:
+        blocks.append(f"""
+        <div class="clock">
+          <div class="name">{clock.name} <span>{clock.status}</span></div>
+          <div class="event">{clock.event_label}</div>
+          <div class="countdown" data-target="{clock.target.isoformat()}">--:--:--<…9855 tokens truncated…                gain_text = f"{gain:+.1%}" if gain is not None else "未設定成本"
+                market_value = item.shares * result.quote.price
+                with st.container(border=True):
+                    cells = st.columns([2.2, 1.25, 1.75, 1.4])
+                    values = (
+                        f"{icon} {item.code} {result.stock.name}<br><span class='small-muted'>{result.stock.industry or '其他業'}</span>",
+                        f"${result.quote.price:,.2f}<br><span class='small-muted'>{gain_text}</span>",
+                        f"{item.shares:,.0f} 股<br><span class='small-muted'>成本 ${item.average_cost:,.2f}</span>" if item.average_cost else f"{item.shares:,.0f} 股<br><span class='small-muted'>未設定成本</span>",
+                        f"${market_value:,.0f}" if item.shares else "關注中",
+                    )
+                    classes = (
+                        "portfolio-cell portfolio-name", "portfolio-cell right",
+                        "portfolio-cell right", "portfolio-cell right",
+                    )
+                    for col, value, class_name in zip(cells, values, classes):
+                        col.markdown(f'<div class="{class_name}">{value}</div>', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<div class="portfolio-card-meta {css_class}">'
+                        f'<span class="level">{icon} {level}｜{action}</span>'
+                        f'<span class="reason">{reason}</span></div>',
+                        unsafe_allow_html=True,
+                    )
+                    with st.expander("查看價位、分析理由與修改"):
+                        if st.button(
+                            "📊 查看智慧分析",
+                            key=f"analyze-portfolio-{item.code}",
+                            type="primary",
+                            use_container_width=True,
+                        ):
+                            st.session_state.pending_stock = item.code
+                            st.session_state.active_page = "智慧分析"
+                            st.session_state.return_to_portfolio = True
+                            st.rerun()
+                        c1, c2 = st.columns(2)
+                        c1.metric("綜合分數", f"{result.overall_score:.0f}")
+                        c2.metric("資料信心度", f"{result.confidence:.0f}%")
+                        st.caption(
+                            f"布局 {result.watch_low:.2f}–{result.watch_high:.2f}　｜　"
+                            f"失效 {result.invalidation_price:.2f}　｜　"
+                            f"目標一 {result.first_target_price:.2f}　｜　目標二 {result.second_target_price:.2f}"
+                        )
+                        with st.form(f"edit-{item.code}"):
+                            e1, e2, e3 = st.columns([1, 1, 2])
+                            new_shares = e1.number_input("股數", min_value=0.0, value=float(item.shares), step=100.0, key=f"shares-{item.code}")
+                            new_cost = e2.number_input("平均成本", min_value=0.0, value=float(item.average_cost), step=1.0, key=f"cost-{item.code}")
+                            new_note = e3.text_input("備註", value=item.note, key=f"note-{item.code}")
+                            if st.form_submit_button("儲存修改", type="primary"):
+                                store.upsert(PortfolioItem(item.code, new_shares, new_cost, new_note))
+                                st.rerun()
+                        if st.button("從清單移除", key=f"remove-{item.code}"):
+                            store.delete(item.code)
+                            st.rerun()
+
+    render_items(held_tab, True)
+    render_items(watch_tab, False)
+    with dividend_tab:
+        render_dividend_calendar(provider, analyzed)
+
+
+provider = get_provider()
+st.title("台股智慧分析室")
+st.caption("上市＋上櫃股票與 ETF｜最新行情輔助 × 多構面風險評分｜不構成投資建議")
+if beginner_mode():
+    render_beginner_guide()
+render_market_clocks()
+st.caption("倒數依台股 09:00–13:30、美股 09:30–16:00 正常交易時段估算；週末已排除，特殊休市與提早收盤請以交易所公告為準。")
+
+if "pending_stock" in st.session_state:
+    st.session_state.stock_query = st.session_state.pop("pending_stock")
+
+with st.sidebar:
+    st.header("功能頁籤")
+    st.caption("快速切換分析工具")
+    st.toggle(
+        "🎓 新手輔助術語提示",
+        key="beginner_assist",
+        help="開啟後會顯示白話術語表，並在指標卡與 K 線圖加入滑鼠懸停說明。",
+    )
+    st.divider()
+    pages = [
+        ("🌐", "大盤趨勢"), ("📊", "智慧分析"), ("✨", "近期關注"), ("💼", "我的組合"),
+        ("🔥", "市場排行"), ("ℹ️", "使用說明"),
+    ]
+    if "active_page" not in st.session_state:
+        st.session_state.active_page = "大盤趨勢"
+    with st.container(key="sidebar_nav"):
+        for icon, label in pages:
+            if st.button(
+                f"{icon}　{label}", key=f"nav-{label}",
+                type="primary" if st.session_state.active_page == label else "secondary",
+            ):
+                st.session_state.active_page = label
+                if label != "智慧分析":
+                    st.session_state.pop("return_to_portfolio", None)
+                st.rerun()
+    page = st.session_state.active_page
+    st.divider()
+    with st.expander("智慧分析設定", expanded=page == "智慧分析"):
+        if "stock_query" not in st.session_state:
+            st.session_state.stock_query = "2330"
+        stock_query = st.text_input("股票代碼或名稱", key="stock_query")
+        horizon_label = st.radio(
+            "分析週期", ["短線", "中線", "長線"], index=1, horizontal=True,
+            help="短線 1–10 日；中線 1–3 個月；長線 6–24 個月",
+        )
+        horizon = {"短線": "短線", "中線": "波段", "長線": "中長期"}[horizon_label]
+        risk_profile = st.selectbox("風險屬性", ["保守", "穩健", "積極"], index=1)
+        include_news = st.checkbox("納入國際新聞情緒（5%）", value=False)
+        refresh = st.button("重新抓取最新資料", use_container_width=True)
+    with st.expander("進階：上傳 CSV 備援"):
+        uploaded = st.file_uploader("日線 CSV", type="csv", help="date, open, high, low, close, volume")
+    st.caption("Yahoo 僅補最新行情；分析資料會顯示實際來源與時間。")
+
+if page == "大盤趨勢":
+    render_market_overview(provider)
+    st.stop()
+
+if page == "近期關注":
+    render_opportunity_scan(provider, horizon, risk_profile)
+    st.stop()
+
+if page == "我的組合":
+    render_portfolio(provider, horizon, risk_profile)
+    st.stop()
+
+if page == "市場排行":
+    render_hot_list(provider)
+    st.info("點選任一標的後，左側切回「智慧分析」即可查看短線、中線或長線建議。")
+    st.stop()
+
+if page == "使用說明":
+    st.markdown("""
+    ## 使用方式
+
+    1. 左側選擇「智慧分析」。
+    2. 輸入股票或 ETF 代碼／名稱。
+    3. 選擇短線、中線或長線，以及風險屬性。
+    4. 查看綜合分數、信心度、支持因素、風險、觀察區與失效條件。
+
+    **週期定義**
+
+    - 短線：1–10 個交易日，技術與成交動能權重較高。
+    - 中線：1–3 個月，平衡技術、基本、籌碼與風險。
+    - 長線：6–24 個月，基本面與風險權重較高。
+
+    **近期關注與我的組合**
+
+    - 「近期關注」會從市場熱門候選中重新評分，可一鍵加入清單。
+    - 「我的組合」可保存股數、成本與備註，並顯示補入、續抱、減碼或退出參考。
+    - 第一、第二目標價、布局區和失效價均由近期支撐壓力、均線與 ATR 計算，不代表精確最高或最低價。
+
+    分析結果是客觀資料整理與規則評分，不保證未來績效，也不構成投資建議。
+    """)
+    st.stop()
+
+if uploaded:
+    try:
+        manual = add_indicators(pd.read_csv(uploaded))
+        st.info("目前顯示上傳資料的技術圖表；完整適合度分析需選擇官方股票代碼。")
+        render_price_chart(manual)
+    except Exception as exc:
+        st.error(f"CSV 格式錯誤：{exc}")
+    st.stop()
+
+try:
+    matches = provider.search_stocks(stock_query)
+except Exception as exc:
+    matches = []
+    st.warning(f"股票清單暫時無法更新：{exc}")
+
+selected_code = None
+if stock_query.strip().isdigit() and 4 <= len(stock_query.strip()) <= 6:
+    exact = [x for x in matches if x.code == stock_query.strip()]
+    if exact:
+        selected_code = exact[0].code
+elif matches:
+    options = {f"{x.code} {x.name}｜{x.industry or '其他業'}（{x.market}）": x.code for x in matches[:30]}
+    chosen = st.selectbox("搜尋結果", list(options))
+    selected_code = options[chosen]
+
+if not selected_code:
+    st.info("請輸入四位數股票代碼，或以公司名稱搜尋後選擇股票。")
+    render_hot_list(provider)
+    st.stop()
+
+try:
+    with st.spinner("正在取得市場資料並計算適合度…"):
+        result = analyze_stock(
+            provider,
+            StockAnalysisRequest(
+                stock_code=selected_code, horizon=horizon, risk_profile=risk_profile,
+                include_news=include_news,
+            ),
+            refresh=refresh,
+        )
+except Exception as exc:
+    st.error(f"無法完成分析：{exc}")
+    render_hot_list(provider)
+    st.stop()
+
+quote = result.quote
+market_time = quote.meta.market_time.astimezone().strftime("%Y-%m-%d %H:%M") if quote.meta.market_time else "未提供"
+asset_type = getattr(result.stock, "asset_type", "ETF" if result.stock.code.startswith("00") else "STOCK")
+asset_label = "ETF" if asset_type == "ETF" else "股票"
+if st.session_state.get("return_to_portfolio"):
+    if st.button("← 返回我的組合", key="back-to-portfolio", use_container_width=False):
+        st.session_state.active_page = "我的組合"
+        st.session_state.pop("return_to_portfolio", None)
+        st.rerun()
+industry_label = result.stock.industry or ("ETF" if asset_type == "ETF" else "其他業")
+st.subheader(f"{result.stock.code} {result.stock.name}｜{industry_label}｜{result.stock.market} {asset_label}")
+render_live_quote(provider, result)
+top_scores = st.columns(4)
+metric_card(top_scores[0], "技術面", f"{result.technical_score:.0f}")
+metric_card(top_scores[1], "基本面", f"{result.fundamental_score:.0f}")
+metric_card(top_scores[2], "籌碼面", f"{result.chip_score:.0f}")
+metric_card(top_scores[3], "風險面", f"{result.risk_score:.0f}")
+if result.signal.startswith("偏多"):
+    st.success(f"分析結論：{result.signal}")
+elif "觀望" in result.signal:
+    st.warning(f"分析結論：{result.signal}")
+else:
+    st.error(f"分析結論：{result.signal}")
+st.caption(f"完整分析基準時間：{market_time}｜來源：{quote.meta.source}｜分析週期：{horizon_label}｜風險屬性：{risk_profile}")
+if quote.meta.warning:
+    st.warning(quote.meta.warning)
+
+tabs = st.tabs(["綜合判斷", "技術分析", "基本籌碼", "歷史驗證", "新聞趨勢", "資料狀態"])
+
+with tabs[0]:
+    st.markdown("### 理性數據綜合建議")
+    if result.signal.startswith("偏多"):
+        recommendation = "可列入分批布局觀察，但不建議追價；以觀察區與失效價管理風險。"
+    elif "觀望" in result.signal:
+        recommendation = "目前先觀望，等待趨勢、動能或基本數據改善後再重新評估。"
+    else:
+        recommendation = "目前不建議新建部位；若已持有，應檢查失效價與可承受風險。"
+    st.write(f"**{horizon_label}建議：{recommendation}**")
+    st.caption(
+        f"依技術 {result.technical_score:.0f}、基本 {result.fundamental_score:.0f}、"
+        f"籌碼 {result.chip_score:.0f}、風險 {result.risk_score:.0f} 分綜合判定；"
+        f"資料信心度 {result.confidence:.0f}%。"
+    )
+    st.divider()
+    a, b = st.columns(2)
+    with a:
+        st.markdown("### 支持因素")
+        if result.positive_reasons:
+            for reason in result.positive_reasons:
+                st.write(f"✅ {reason}")
+        else:
+            st.write("目前沒有明確加分因素。")
+    with b:
+        st.markdown("### 風險與扣分因素")
+        if result.negative_reasons:
+            for reason in result.negative_reasons:
+                st.write(f"⚠️ {reason}")
+        else:
+            st.write("目前沒有明確扣分因素。")
+    st.divider()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("觀察區下緣", money(result.watch_low))
+    c2.metric("觀察區上緣", money(result.watch_high))
+    c3.metric("失效參考價", money(result.invalidation_price))
+    c4.metric("單股部位上限", f"{result.max_position_pct:.0%}")
+    t1, t2 = st.columns(2)
+    t1.metric("第一停利／減碼參考", money(result.first_target_price))
+    t2.metric("第二停利／減碼參考", money(result.second_target_price))
+    if result.missing_data:
+        st.markdown("### 資料限制")
+        for item in result.missing_data:
+            st.write(f"• {item}")
+    st.info("評分是依目前可取得資料產生的研究結果；觀察區與失效價不是委託價格，也不保證未來報酬。")
+
+with tabs[1]:
+    latest = result.prices.iloc[-1]
+    trend_label, trend_icon, trend_class, trend_reasons = technical_trend_view(latest)
+    st.markdown(
+        f'<div class="trend-card {trend_class}">'
+        f'<div class="title">{trend_icon} 技術趨勢：{trend_label}</div>'
+        f'<div class="detail">{"　｜　".join(trend_reasons)}</div>'
+        f'<div class="detail">綜合均線、RSI、MACD 與 KD；這是目前技術狀態，不等同未來一定上漲或下跌。</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("### 價格趨勢與成交量")
+    chart_range = st.segmented_control(
+        "顯示區間",
+        options=["一週內", "一個月內", "三個月內", "半年內"],
+        default="一個月內",
+        key=f"chart-range-{result.stock.code}",
+        help="只改變圖表顯示範圍，不會重新下載或改變分析評分。",
+    )
+    chart_type = st.segmented_control(
+        "圖表／指標",
+        options=["K 線與均線", "布林通道", "RSI", "MACD", "KD", "ATR 與量能"],
+        default="K 線與均線",
+        key=f"chart-type-{result.stock.code}",
+        help="切換不同技術指標圖，不會改變綜合分析分數。",
+    )
+    if chart_type == "K 線與均線" or not chart_type:
+        render_price_chart(result.prices, chart_range or "一個月內")
+    else:
+        render_indicator_chart(result.prices, chart_range or "一個月內", chart_type)
+    st.markdown("### 技術指標摘要")
+    momentum_cols = st.columns(3)
+    for col, label, value in zip(
+        momentum_cols,
+        ("RSI(14)", "MACD", "ATR(14)"),
+        (latest.rsi14, latest.macd, latest.atr14),
+    ):
+        metric_card(col, label, f"{value:.2f}")
+    signal_cols = st.columns(3)
+    for col, label, value in zip(
+        signal_cols,
+        ("KD-K", "KD-D", "風險分數"),
+        (latest.kd_k, latest.kd_d, result.risk_score),
+    ):
+        metric_card(col, label, f"{value:.2f}", term="風險面" if label == "風險分數" else label)
+    if beginner_mode():
+        st.caption("RSI、MACD、KD 用於觀察動能與趨勢，ATR 用於衡量波動；請將滑鼠移到指標名稱旁的「?」查看個別解釋。")
+
+with tabs[2]:
+    st.markdown("### 基本面與估值" if asset_type == "STOCK" else "### ETF 估值參考")
+    v1, v2, v3, v4 = st.columns(4)
+    metric_card(v1, "本益比", f"{result.valuation.get('pe', float('nan')):.2f}")
+    metric_card(v2, "股價淨值比", f"{result.valuation.get('pb', float('nan')):.2f}")
+    metric_card(v3, "殖利率", f"{result.valuation.get('yield', float('nan')):.2f}%")
+    if asset_type == "STOCK":
+        metric_card(v4, "月營收年增", f"{result.revenue.get('yoy', float('nan')):.2f}%")
+        st.markdown("### 籌碼")
+        st.json(result.institutional)
+        if "法人籌碼資料不完整" in result.missing_data:
+            st.warning("目前官方端點未提供完整三大法人個股資料，籌碼分數以可取得資料計算並降低信心度。")
+    else:
+        v4.metric("商品類型", "ETF")
+        st.info("ETF 不套用個別公司的月營收與法人籌碼評分；主要依趨勢、動能、波動、回撤、流動性與可取得的殖利率資料分析。")
+
+with tabs[3]:
+    st.markdown("### 以目前週期設定進行歷史驗證")
+    horizon_config = {
+        "短線": BacktestConfig(entry_ma=20, exit_ma=5, max_holding_days=10, rsi_max=68),
+        "波段": BacktestConfig(entry_ma=60, exit_ma=20, max_holding_days=60, rsi_max=72),
+        "中長期": BacktestConfig(entry_ma=120, exit_ma=60, max_holding_days=120, rsi_max=78),
+    }[horizon]
+    backtest = run_backtest(result.prices[["date", "open", "high", "low", "close", "volume"]], horizon_config)
+    metrics, trades, equity = backtest["metrics"], backtest["trades"], backtest["equity"]
+    cols = st.columns(6)
+    for col, (label, value) in zip(cols, [
+        ("總報酬", f"{metrics['total_return']:.1%}"), ("年化報酬", f"{metrics['annual_return']:.1%}"),
+        ("最大回撤", f"{metrics['max_drawdown']:.1%}"), ("Sharpe", f"{metrics['sharpe']:.2f}"),
+        ("交易數", str(metrics["trade_count"])), ("勝率", f"{metrics['win_rate']:.1%}"),
+    ]):
+        col.metric(label, value)
+    curve = go.Figure(go.Scatter(x=equity.date, y=equity.equity, name="策略資產"))
+    curve.update_layout(height=360, margin={"l": 10, "r": 10, "t": 20, "b": 10})
+    st.plotly_chart(curve, use_container_width=True)
+    stats = win_rate_test(metrics["wins"], metrics["trade_count"], 0.6)
+    st.write(f"勝率 95% 信賴區間：{stats['lower']:.1%}～{stats['upper']:.1%}；高於 60% 的單尾 p-value：{stats['p_value']:.4f}")
+    if not trades.empty:
+        simulations = monte_carlo(trades.net_return, horizon_config.initial_capital)
+        st.write(f"Bootstrap 最終資產高於初始資金機率：{(simulations > horizon_config.initial_capital).mean():.1%}")
+        st.dataframe(trades, use_container_width=True, hide_index=True)
+    st.caption("歷史績效僅用於檢查策略穩定性，不會直接改寫目前的購買適合度分數。")
+
+with tabs[4]:
+    st.markdown("### 國際新聞討論趨勢")
+    if not include_news:
+        st.info("在左側勾選「納入國際新聞情緒（5%）」後重新分析。新聞分數只作低權重輔助。")
+    elif result.news_warning:
+        st.warning(result.news_warning)
+    else:
+        st.metric("新聞情緒分數", f"{result.news_score:.0f} / 100" if result.news_score is not None else "無資料")
+        for headline in result.news_headlines:
+            st.write(f"• {headline}")
+        st.caption("新聞標題以規則式正負關鍵詞彙彙整，可能受到媒體偏誤、語境與同名公司影響；最高只占總分 5%。")
+
+with tabs[5]:
+    rows = []
+    for meta in result.data_status:
+        rows.append({
+            "資料來源": meta.source,
+            "市場時間": meta.market_time.isoformat() if meta.market_time else "未提供",
+            "擷取時間": meta.fetched_at.isoformat(),
+            "是否降級／過期": "是" if meta.is_stale else "否",
+            "說明": meta.warning or "",
+        })
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.caption(f"頁面產生時間：{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+st.divider()
+render_hot_list(provider)
+st.caption("本系統僅供研究與模擬，不構成投資建議；請自行評估財務狀況、投資目標與風險承受能力。")
