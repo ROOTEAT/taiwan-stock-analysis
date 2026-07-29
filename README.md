@@ -72,6 +72,11 @@ PUBLIC_DEMO_MODE = true
 
 公開版會自動使用工作階段隔離的「我的組合」，避免不同訪客共用持股資料。免費主機休眠、瀏覽器重新整理或工作階段結束後，公開版組合資料可能重置；本機執行仍使用 SQLite 保存。
 
+若在 Streamlit Secrets 設定 `SUPABASE_URL` 與
+`SUPABASE_SERVICE_ROLE_KEY`，公開版會啟用帳號登入與 Supabase 持久化。
+資料表建置 SQL 位於 `twstock_lab.cloud_storage.SUPABASE_SCHEMA_SQL`；服務角色
+金鑰只能放在 Secrets，禁止提交到 GitHub。
+
 請勿把 `.streamlit/secrets.toml`、API 金鑰、個人持股資料或 SQLite 資料庫提交到 GitHub。
 
 > 本專案僅供研究與模擬，不構成投資建議。Yahoo 僅作最新行情與官方歷史不足時的補充來源。
