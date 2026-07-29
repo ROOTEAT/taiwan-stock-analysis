@@ -11,6 +11,7 @@ from streamlit_plotly_events import plotly_events
 
 from twstock_lab.analysis import analyze_stock
 from twstock_lab.backtest import BacktestConfig, monte_carlo, run_backtest
+from twstock_lab.cloud_storage import SupabaseClient, SupabasePortfolioStore
 from twstock_lab.indicators import add_indicators
 from twstock_lab.models import StockAnalysisRequest
 from twstock_lab.market_clock import market_clock
@@ -97,6 +98,7 @@ h3 {font-size:clamp(1.15rem, 1.8vw, 1.5rem) !important;}
   justify-content:center;
 }
 [data-testid="stMetricLabel"] {min-height:1.55rem;}
+
 [data-testid="column"] {min-width:0;}
 [data-baseweb="tab-list"] {gap:.35rem; overflow-x:auto; scrollbar-width:thin;}
 [data-baseweb="tab"] {min-height:44px; white-space:nowrap; padding-left:1rem; padding-right:1rem;}
@@ -148,7 +150,6 @@ h3 {font-size:clamp(1.15rem, 1.8vw, 1.5rem) !important;}
 .st-key-beginner_assist [data-testid="stTooltipIcon"],
 .st-key-beginner_assist [data-testid="stTooltipHoverTarget"] {
   width:24px !important;
-
   height:24px !important;
 }
 .st-key-beginner_assist [data-testid="stTooltipIcon"] svg {
@@ -198,6 +199,7 @@ h3 {font-size:clamp(1.15rem, 1.8vw, 1.5rem) !important;}
 }
 .trend-card {
   padding:14px 16px; border-radius:15px; margin:.2rem 0 .7rem;
+
   line-height:1.55; backdrop-filter:blur(14px);
 }
 .trend-card .title {font-size:1.08rem; font-weight:800;}
@@ -244,8 +246,68 @@ def get_local_portfolio_store() -> PortfolioStore:
 
 def get_portfolio_store():
     if public_demo_mode():
+        cloud = get_cloud_client()
+        user = st.session_state.get("cloud_user")
+        if cloud is not None and user:
+            return SupabasePortfolioStore(cloud, user["id"])
         return SessionPortfolioStore(st.session_state)
     return get_local_portfolio_store()
+
+
+@st.cache_resource
+def get_cloud_client() -> SupabaseClient | None:
+    try:
+        url = str(st.secrets.get("SUPABASE_URL", "")).strip()
+        key = str(st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", "")).strip()
+    except Exception:
+        return None
+    return SupabaseClient(url, key) if url and key else None
+
+
+def render_cloud_login() -> None:
+    client = get_cloud_client()
+    if client is None or st.session_state.get("cloud_user"):
+        return
+    st.title("台股智慧分析室")
+    st.caption("登入後即可永久保存自己的持股與關注清單")
+    login_tab, register_tab = st.tabs(["登入", "建立帳號"])
+    with login_tab:
+        with st.form("cloud-login"):
+            username = st.text_input("帳號", key="login_username")
+            password = st.text_input("密碼", type="password", key="login_password")
+            submitted = st.form_submit_button("登入並載入我的組合", type="primary")
+        if submitted:
+            try:
+                user = client.authenticate(username, password)
+                if user is None:
+                    st.error("帳號或密碼不正確")
+                else:
+                    st.session_state.cloud_user = {"id": user.id, "username": user.username}
+                    st.rerun()
+            except Exception as exc:
+                st.error(f"登入暫時失敗：{exc}")
+    with register_tab:
+        with st.form("cloud-register"):
+            new_username = st.text_input(
+                "建立帳號", help="3–32 個英文字母、數字、底線、句點或連字號"
+            )
+            new_password = st.text_input("建立密碼", type="password")
+            confirm_password = st.text_input("再次輸入密碼", type="password")
+            registered = st.form_submit_button("建立帳號", type="primary")
+        if registered:
+            if new_password != confirm_password:
+                st.error("兩次輸入的密碼不同")
+            else:
+                try:
+                    user = client.register(new_username, new_password)
+
+                    st.session_state.cloud_user = {"id": user.id, "username": user.username}
+                    st.success("帳號建立完成，正在載入你的專屬組合")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+    st.info("帳號資料經雜湊後保存；系統管理者也無法讀取你的原始密碼。")
+    st.stop()
 
 
 def money(value: float) -> str:
@@ -299,7 +361,6 @@ def render_beginner_guide() -> None:
         'K 線圖移到任一根 K 棒，可查看當日點位與漲跌幅。</div>',
         unsafe_allow_html=True,
     )
-
     with st.expander("📖 常用盤中術語與交易時間", expanded=False):
         st.markdown("""
 | 術語 | 白話說明 |
@@ -340,6 +401,7 @@ def render_beginner_guide() -> None:
 | 類別 | 白話解釋 | 本系統 |
 |---|---|---|
 | **趨勢** | 價格大致可分為上升、下降或橫向盤整；不要因單日漲跌就認定趨勢改變。 | MA20、MA60 與 K 線 |
+
 | **成交量** | 反映交易活躍程度。價漲量增、價跌量增代表的市場力道不同，需與價格一起看。 | 成交量、20 日均量 |
 | **支撐／壓力** | 過去較容易止跌或遇到賣壓的價格區域，不是一條保證有效的精準價位。 | 觀察區、目標與失效參考 |
 | **K 線分析** | 一根 K 棒濃縮一段時間的開、高、低、收，呈現當期多空交戰結果。 | 可直接點選日 K 查看解說 |
@@ -440,6 +502,7 @@ def render_live_quote(provider: HybridTaiwanProvider, result) -> None:
 def explain_kbar(row: pd.Series) -> tuple[str, str]:
     open_price, high, low, close = (float(row[key]) for key in ("open", "high", "low", "close"))
     full_range = max(high - low, 1e-9)
+
     body = abs(close - open_price)
     upper_shadow = high - max(open_price, close)
     lower_shadow = min(open_price, close) - low
@@ -450,7 +513,6 @@ def explain_kbar(row: pd.Series) -> tuple[str, str]:
     if body / full_range <= 0.08:
         pattern = "十字線"
         meaning = "開盤與收盤很接近，代表當日多空拉鋸、方向尚未明朗。"
-
     elif upper_shadow >= body * 2 and lower_shadow <= full_range * 0.12:
         pattern = "長上影／倒鎚型"
         meaning = "盤中曾明顯上攻，但收盤前被賣壓壓回；需搭配前後趨勢與成交量確認。"
@@ -541,6 +603,7 @@ def render_indicator_explanation(chart_type: str, row: pd.Series) -> None:
             c1, c2 = st.columns(2)
             c1.metric("RSI(14)", f"{row.rsi14:.2f}")
             c2.metric("所在區域", state)
+
             st.info(f"這個位置代表：RSI 處於{state}。偏熱不等於立刻下跌，偏弱也不等於立刻反彈，仍要確認趨勢。")
         elif chart_type == "MACD":
             histogram = row.macd - row.macd_signal
@@ -601,7 +664,6 @@ def render_indicator_chart(prices: pd.DataFrame, display_range: str, chart_type:
         fig.add_trace(go.Bar(x=recent.date, y=histogram, name="柱狀差", marker_color=colors))
         fig.add_trace(go.Scatter(x=recent.date, y=recent.macd, name="MACD", line={"color": "#60a5fa", "width": 2}))
         fig.add_trace(go.Scatter(x=recent.date, y=recent.macd_signal, name="訊號線", line={"color": "#facc15", "width": 2}))
-
         fig.add_hline(y=0, line_color="rgba(255,255,255,.35)")
         beginner_note = "MACD 向上穿越訊號線常稱黃金交叉，向下穿越稱死亡交叉；交叉可能落後價格，需配合趨勢判讀。"
     elif chart_type == "KD":
@@ -642,6 +704,7 @@ def render_indicator_chart(prices: pd.DataFrame, display_range: str, chart_type:
         selected_points = plotly_events(
             fig,
             click_event=True,
+
             select_event=False,
             hover_event=False,
             override_height=500 if chart_type == "ATR 與量能" else 450,
@@ -742,6 +805,7 @@ def render_price_chart(prices: pd.DataFrame, display_range: str = "半年內") -
         st.caption("🔴 紅 K＝收盤高於開盤；🟢 綠 K＝收盤低於開盤。點一下 K 棒可看白話解讀；點擊不會改變分析結果。")
         if selected_points:
             point = selected_points[-1]
+
             selected_x = point.get("x") if isinstance(point, dict) else getattr(point, "x", None)
             if selected_x is not None:
                 selected_date = pd.to_datetime(selected_x).date()
@@ -752,7 +816,6 @@ def render_price_chart(prices: pd.DataFrame, display_range: str = "半年內") -
                     day_change = float(row["change_pct"]) if pd.notna(row["change_pct"]) else 0.0
                     with st.container(border=True):
                         st.markdown(f"#### 🕯️ 點選的 K 棒：{selected_date:%Y-%m-%d}")
-
                         st.markdown(f"**型態判讀：{pattern}**")
                         values = st.columns(4)
                         values[0].metric("開盤", f"{row.open:,.2f}")
@@ -843,6 +906,7 @@ def render_market_overview(provider: HybridTaiwanProvider) -> None:
 
 def render_opportunity_scan(provider: HybridTaiwanProvider, horizon: str, risk_profile: str) -> None:
     st.subheader("近期值得關注的候選")
+
     st.caption("候選來自官方成交量與漲幅排行，再以技術、基本、籌碼與風險資料重新評分；不是保證上漲清單。")
     if "scan_horizon" not in st.session_state:
         st.session_state.scan_horizon = "波段"
@@ -903,7 +967,6 @@ def render_opportunity_scan(provider: HybridTaiwanProvider, horizon: str, risk_p
             if len(candidates) >= max_candidates:
                 break
         progress = st.progress(0, text="正在分析候選標的…")
-
         results = []
         for index, code in enumerate(candidates):
             try:
@@ -944,6 +1007,7 @@ def render_opportunity_scan(provider: HybridTaiwanProvider, horizon: str, risk_p
             )
             c2.markdown(
                 f'<div class="portfolio-cell right">{result.overall_score:.0f} 分'
+
                 f'<br><span class="small-muted">信心 {result.confidence:.0f}%</span></div>', unsafe_allow_html=True,
             )
             c3.markdown(
@@ -1044,6 +1108,7 @@ def render_portfolio(provider: HybridTaiwanProvider, horizon: str, risk_profile:
             shares = c2.number_input("股數", min_value=0.0, step=100.0)
             cost = c3.number_input("平均成本", min_value=0.0, step=1.0)
             note = c4.text_input("備註")
+
             submitted = st.form_submit_button("加入組合")
             if submitted:
                 try:
@@ -1054,7 +1119,6 @@ def render_portfolio(provider: HybridTaiwanProvider, horizon: str, risk_profile:
                 except Exception as exc:
                     st.error(f"無法加入：{exc}")
     items = store.list()
-
     analyzed = []
     for item in items:
         try:
@@ -1145,6 +1209,7 @@ def render_portfolio(provider: HybridTaiwanProvider, horizon: str, risk_profile:
                         f'<span class="reason">{reason}</span></div>',
                         unsafe_allow_html=True,
                     )
+
                     with st.expander("查看價位、分析理由與修改"):
                         if st.button(
                             "📊 查看智慧分析",
@@ -1182,6 +1247,9 @@ def render_portfolio(provider: HybridTaiwanProvider, horizon: str, risk_profile:
         render_dividend_calendar(provider, analyzed)
 
 
+if public_demo_mode():
+    render_cloud_login()
+
 provider = get_provider()
 st.title("台股智慧分析室")
 st.caption("上市＋上櫃股票與 ETF｜最新行情輔助 × 多構面風險評分｜不構成投資建議")
@@ -1196,6 +1264,14 @@ if "pending_stock" in st.session_state:
 with st.sidebar:
     st.header("功能頁籤")
     st.caption("快速切換分析工具")
+    cloud_user = st.session_state.get("cloud_user")
+    if cloud_user:
+        st.success(f"☁️ 已登入：{cloud_user['username']}")
+        if st.button("登出", key="cloud-logout"):
+            st.session_state.pop("cloud_user", None)
+            st.rerun()
+    elif public_demo_mode():
+        st.warning("目前尚未連接雲端帳號，資料只暫存在本次工作階段。")
     st.toggle(
         "🎓 新手輔助術語提示",
         key="beginner_assist",
@@ -1205,7 +1281,6 @@ with st.sidebar:
     pages = [
         ("🌐", "大盤趨勢"), ("📊", "智慧分析"), ("✨", "近期關注"), ("💼", "我的組合"),
         ("🔥", "市場排行"), ("ℹ️", "使用說明"),
-
     ]
     if "active_page" not in st.session_state:
         st.session_state.active_page = "大盤趨勢"
@@ -1235,6 +1310,7 @@ with st.sidebar:
         refresh = st.button("重新抓取最新資料", use_container_width=True)
     with st.expander("進階：上傳 CSV 備援"):
         uploaded = st.file_uploader("日線 CSV", type="csv", help="date, open, high, low, close, volume")
+
     st.caption("Yahoo 僅補最新行情；分析資料會顯示實際來源與時間。")
 
 if page == "大盤趨勢":
@@ -1335,6 +1411,7 @@ if st.session_state.get("return_to_portfolio"):
         st.rerun()
 industry_label = result.stock.industry or ("ETF" if asset_type == "ETF" else "其他業")
 st.subheader(f"{result.stock.code} {result.stock.name}｜{industry_label}｜{result.stock.market} {asset_label}")
+
 render_live_quote(provider, result)
 top_scores = st.columns(4)
 metric_card(top_scores[0], "技術面", f"{result.technical_score:.0f}")
@@ -1356,7 +1433,6 @@ tabs = st.tabs(["綜合判斷", "技術分析", "基本籌碼", "歷史驗證", 
 with tabs[0]:
     st.markdown("### 理性數據綜合建議")
     if result.signal.startswith("偏多"):
-
         recommendation = "可列入分批布局觀察，但不建議追價；以觀察區與失效價管理風險。"
     elif "觀望" in result.signal:
         recommendation = "目前先觀望，等待趨勢、動能或基本數據改善後再重新評估。"
@@ -1436,6 +1512,7 @@ with tabs[1]:
         ("RSI(14)", "MACD", "ATR(14)"),
         (latest.rsi14, latest.macd, latest.atr14),
     ):
+
         metric_card(col, label, f"{value:.2f}")
     signal_cols = st.columns(3)
     for col, label, value in zip(
@@ -1507,7 +1584,6 @@ with tabs[5]:
     for meta in result.data_status:
         rows.append({
             "資料來源": meta.source,
-
             "市場時間": meta.market_time.isoformat() if meta.market_time else "未提供",
             "擷取時間": meta.fetched_at.isoformat(),
             "是否降級／過期": "是" if meta.is_stale else "否",
