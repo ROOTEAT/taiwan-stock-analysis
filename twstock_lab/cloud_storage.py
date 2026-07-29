@@ -215,4 +215,6 @@ alter table public.app_users enable row level security;
 alter table public.portfolio_items enable row level security;
 revoke all on public.app_users from anon, authenticated;
 revoke all on public.portfolio_items from anon, authenticated;
+grant select, insert, update, delete on public.app_users to service_role;
+grant select, insert, update, delete on public.portfolio_items to service_role;
 """.strip()
