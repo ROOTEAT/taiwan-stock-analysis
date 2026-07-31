@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Protocol
 import warnings
 
@@ -387,6 +388,40 @@ class HybridTaiwanProvider:
                 live_codes.add(code)
             if live_codes:
                 rows = [item for item in rows if item["code"] in live_codes]
+            else:
+                # Hosted environments may reject large MIS batches. Correct the
+                # visible candidates with the per-symbol latest quote endpoint.
+                volume_candidates = sorted(rows, key=lambda x: x["volume"], reverse=True)[:10]
+                gain_candidates = sorted(rows, key=lambda x: x["change_pct"], reverse=True)[:10]
+                loss_candidates = sorted(rows, key=lambda x: x["change_pct"])[:10]
+                fallback_items = {item["code"]: item for item in (*volume_candidates, *gain_candidates, *loss_candidates)}
+                now = datetime.now(TAIPEI)
+                market_open = (now.weekday() < 5 and now.hour >= 9 and (now.hour < 13 or (now.hour == 13 and now.minute < 30)))
+
+                def fetch_fallback(item):
+                    stock = StockInfo(
+                        item["code"], item["name"], item["market"],
+                        industry=item["industry"],
+                        asset_type="ETF" if item["code"].startswith("00") else "STOCK",
+                    )
+                    return item, self.get_latest_quote(stock, refresh=market_open)
+
+                corrected: list[dict] = []
+                with ThreadPoolExecutor(max_workers=8) as executor:
+                    futures = [executor.submit(fetch_fallback, item) for item in fallback_items.values()]
+                    for future in as_completed(futures):
+                        try:
+                            item, quote = future.result()
+                        except Exception:
+                            continue
+                        item["price"] = quote.price
+                        item["change_pct"] = quote.change_pct
+                        item["volume"] = quote.volume
+                        item["market_time"] = quote.meta.market_time
+                        item["source"] = quote.meta.source
+                        corrected.append(item)
+                if corrected:
+                    rows = corrected
         return {
             "volume": sorted(rows, key=lambda x: x["volume"], reverse=True)[:50],
             "gainers": sorted(rows, key=lambda x: x["change_pct"], reverse=True)[:50],
