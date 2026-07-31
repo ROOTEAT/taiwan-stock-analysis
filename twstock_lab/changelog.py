@@ -16,6 +16,16 @@ class ReleaseNote:
 
 CHANGELOG: tuple[ReleaseNote, ...] = (
     ReleaseNote(
+        version="Ver-20260731-162126-221",
+        title="產業漲跌幅熱度圖",
+        changes=(
+            "大盤趨勢新增產業漲跌幅 Treemap 熱度圖，快速比較各產業當日強弱。",
+            "方塊面積反映成交活躍度，採台股紅漲、綠跌配色，接近平盤顯示黃色。",
+            "滑鼠移入可查看平均漲跌、上漲家數比例、樣本股票數、熱度分數與成交量。",
+            "色階依當日產業漲跌分布自動調整，避免少數極端值讓其他產業難以辨識。",
+        ),
+    ),
+    ReleaseNote(
         version="Ver-20260731-161511-246",
         title="側欄收合滿版與組合操作優化",
         changes=(
