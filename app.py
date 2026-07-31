@@ -410,6 +410,10 @@ def render_cloud_login() -> None:
     if client is None or st.session_state.get("cloud_user"):
         return
     render_page_header("登入後即可永久保存自己的持股與關注清單")
+    st.warning(
+        "🔐 密碼安全提醒：請不要輸入你平常用於 Email、銀行、社群或其他網站的重要密碼。"
+        "為本站另外設定一組至少 8 個字元、自己好記的獨立密碼即可。"
+    )
     login_tab, register_tab = st.tabs(["登入", "建立帳號"])
     with login_tab:
         with st.form("cloud-login"):
