@@ -1064,6 +1064,7 @@ def _render_hot_list_content(provider: HybridTaiwanProvider) -> None:
                 )
                 if st.button("查看分析", key=f"hot-{key}-{item['code']}", use_container_width=True):
                     st.session_state.pending_stock = item["code"]
+                    st.session_state.active_page = "智慧分析"
                     st.rerun()
 
 
