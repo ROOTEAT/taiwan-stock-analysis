@@ -214,6 +214,29 @@ class SupabaseClient:
             return None
         return CloudUser(rows[0]["id"], rows[0]["username"])
 
+    def get_admin_overview(self) -> tuple[list[dict], list[dict]]:
+        """Return account and portfolio metadata for the server-side admin view.
+
+        Password hashes are deliberately never selected or returned.
+        """
+        users = self._request(
+            "GET",
+            "app_users",
+            params={
+                "select": "id,username,created_at",
+                "order": "created_at.desc",
+            },
+        ) or []
+        portfolios = self._request(
+            "GET",
+            "portfolio_items",
+            params={
+                "select": "user_id,code,shares,average_cost,note,updated_at",
+                "order": "updated_at.desc",
+            },
+        ) or []
+        return users, portfolios
+
 
 class SupabasePortfolioStore:
     def __init__(self, client: SupabaseClient, user_id: str) -> None:
