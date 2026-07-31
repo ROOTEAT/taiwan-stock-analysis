@@ -16,6 +16,15 @@ class ReleaseNote:
 
 CHANGELOG: tuple[ReleaseNote, ...] = (
     ReleaseNote(
+        version="Ver-20260731-144330-755",
+        title="熱門排行卡片對齊",
+        changes=(
+            "熱門排行卡片統一寬度、高度與內距。",
+            "股票名稱或資訊過長時使用省略顯示，維持三欄整齊對齊。",
+            "查看分析按鈕統一高度。",
+        ),
+    ),
+    ReleaseNote(
         version="Ver-20260731-143547-784",
         title="盤中排行資料與版面修正",
         changes=(
