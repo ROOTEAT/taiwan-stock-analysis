@@ -219,7 +219,7 @@ h3 {font-size:clamp(1.15rem, 1.8vw, 1.5rem) !important;}
 .rooteat-easter-egg {
   position:fixed;
   right:22px;
-  bottom:14px;
+  bottom:76px;
   z-index:999;
   text-align:right;
   color:rgba(226,232,240,.42);
