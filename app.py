@@ -20,6 +20,7 @@ from twstock_lab.cloud_storage import (
     sign_session_token,
     verify_session_token,
 )
+from twstock_lab.changelog import CHANGELOG, CURRENT_VERSION
 from twstock_lab.indicators import add_indicators
 from twstock_lab.models import StockAnalysisRequest
 from twstock_lab.market_clock import market_clock
@@ -1329,8 +1330,22 @@ if public_demo_mode():
     render_cloud_login()
 
 provider = get_provider()
-st.title("台股智慧分析室")
-st.caption("上市＋上櫃股票與 ETF｜最新行情輔助 × 多構面風險評分｜不構成投資建議")
+title_col, changelog_col = st.columns([5, 1.35], vertical_alignment="top")
+with title_col:
+    st.title("台股智慧分析室")
+    st.caption("上市＋上櫃股票與 ETF｜最新行情輔助 × 多構面風險評分｜不構成投資建議")
+with changelog_col:
+    with st.popover("📝 更新日誌", use_container_width=True):
+        st.markdown("### 更新日誌")
+        st.caption(f"目前版本：{CURRENT_VERSION}")
+        for index, release in enumerate(CHANGELOG):
+            with st.expander(
+                f"{release.version}｜{release.title}",
+                expanded=index == 0,
+            ):
+                for change in release.changes:
+                    st.markdown(f"- {change}")
+    st.caption(CURRENT_VERSION)
 if beginner_mode():
     render_beginner_guide()
 render_market_clocks()
