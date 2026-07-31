@@ -81,9 +81,19 @@ st.markdown("""
   font-weight:700;
   white-space:nowrap;
 }
+[data-testid="stMain"],
+[data-testid="stMainBlockContainer"] {
+  min-width:0 !important;
+}
+[data-testid="stMain"] {
+  width:auto !important;
+  flex:1 1 auto !important;
+}
+[data-testid="stMainBlockContainer"],
 [data-testid="stAppViewContainer"] > .main .block-container {
   width:100%;
-  max-width:none;
+  max-width:none !important;
+  box-sizing:border-box;
   padding-top: 1.35rem;
   padding-left:clamp(1rem,2.2vw,2rem);
   padding-right:clamp(1rem,2.2vw,2rem);
@@ -341,10 +351,28 @@ h3 {font-size:clamp(1.15rem, 1.8vw, 1.5rem) !important;}
   font-size:.76rem;
 }
 @media (min-width: 900px) {
-  [data-testid="stSidebar"] {width:320px !important; min-width:320px !important; max-width:320px !important;}
-  [data-testid="stSidebar"] > div:first-child {width:320px !important;}
+  [data-testid="stSidebar"][aria-expanded="true"] {
+    width:320px !important;
+    min-width:320px !important;
+    max-width:320px !important;
+    flex:0 0 320px !important;
+  }
+  [data-testid="stSidebar"][aria-expanded="true"] > div:first-child {width:320px !important;}
+  [data-testid="stSidebar"][aria-expanded="false"] {
+    width:0 !important;
+    min-width:0 !important;
+    max-width:0 !important;
+    flex:0 0 0 !important;
+    border-right:0 !important;
+  }
+  [data-testid="stSidebar"][aria-expanded="false"] > div:first-child {
+    width:0 !important;
+    min-width:0 !important;
+    overflow:hidden !important;
+  }
 }
 @media (max-width: 899px) {
+  [data-testid="stMainBlockContainer"],
   [data-testid="stAppViewContainer"] > .main .block-container {padding-left:1rem; padding-right:1rem;}
   .portfolio-head {display:none;}
   .portfolio-cell {white-space:normal; font-size:.88rem;}
@@ -1784,6 +1812,7 @@ def render_portfolio(provider: HybridTaiwanProvider, horizon: str, risk_profile:
     store = get_portfolio_store()
     st.subheader("我的組合清單")
     st.caption("先看總覽與顏色，再展開需要處理的標的；詳細價位與編輯欄位預設收合。")
+    st.caption(f"目前判讀設定：{horizon}｜{risk_profile}風險；可在左側「智慧分析設定」調整。")
     with st.expander("＋ 新增股票或 ETF"):
         with st.form("portfolio-add-form", clear_on_submit=True):
             c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
@@ -1802,7 +1831,11 @@ def render_portfolio(provider: HybridTaiwanProvider, horizon: str, risk_profile:
                     st.error(f"無法加入：{exc}")
     items = store.list()
     analyzed = []
-    for item in items:
+    portfolio_progress = (
+        st.progress(0, text=f"正在整理組合 0/{len(items)}｜0%")
+        if items else None
+    )
+    for index, item in enumerate(items):
         try:
             result = analyze_stock_cached(
                 provider, StockAnalysisRequest(item.code, horizon, risk_profile)
@@ -1812,6 +1845,15 @@ def render_portfolio(provider: HybridTaiwanProvider, horizon: str, risk_profile:
             analyzed.append((item, result, action, reason, css_class, level))
         except Exception as exc:
             analyzed.append((item, None, "暫時無法分析", str(exc), "advice-yellow", "資料異常"))
+        if portfolio_progress is not None:
+            completed = index + 1
+            percent = round(completed / len(items) * 100)
+            portfolio_progress.progress(
+                completed / len(items),
+                text=f"正在整理組合 {completed}/{len(items)}｜{percent}%",
+            )
+    if portfolio_progress is not None:
+        portfolio_progress.empty()
 
     held = [row for row in analyzed if row[0].shares > 0]
     market_value = sum(row[0].shares * row[1].quote.price for row in held if row[1])
@@ -1831,10 +1873,12 @@ def render_portfolio(provider: HybridTaiwanProvider, horizon: str, risk_profile:
         f"{pnl / total_cost:+.1%}" if total_cost else None,
         delta_color="inverse",
     )
+    st.caption("持有市值＝最新可用價格 × 股數｜投入成本＝平均成本 × 股數｜未實現損益＝市值－成本")
     summary_status = st.columns(3)
     summary_status[0].metric("🟢 建議較高", status_counts["green"])
     summary_status[1].metric("🟡 觀察", status_counts["yellow"])
     summary_status[2].metric("🔴 優先處理", status_counts["red"])
+    st.caption("🟢 條件相對穩定｜🟡 建議持續觀察｜🔴 建議優先檢查風險與失效價")
 
     held_tab, watch_tab, dividend_tab = st.tabs([
         f"持有（{len(held)}）",
