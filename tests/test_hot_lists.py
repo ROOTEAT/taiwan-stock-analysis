@@ -1,5 +1,8 @@
+from datetime import datetime
+
 from twstock_lab.cache import SQLiteCache
-from twstock_lab.providers import HybridTaiwanProvider
+from twstock_lab.models import DataMeta, Quote
+from twstock_lab.providers import HybridTaiwanProvider, TAIPEI
 
 
 def test_hot_lists_use_mis_snapshot_during_refresh(tmp_path, monkeypatch):
@@ -27,3 +30,18 @@ def test_hot_lists_keep_official_close_without_refresh(tmp_path, monkeypatch):
     quote = provider.get_hot_lists(refresh=False)["volume"][0]
     assert round(quote["change_pct"], 2) == -0.21
     assert quote["source"] == "TWSE 官方盤後行情"
+
+
+def test_hot_lists_fall_back_to_latest_symbol_quote_when_mis_fails(tmp_path, monkeypatch):
+    provider = HybridTaiwanProvider(SQLiteCache(tmp_path / "hot.sqlite3"))
+    official_rows = [{"Date": "1150730", "Code": "0050", "Name": "元大台灣50", "ClosingPrice": "93.50", "Change": "-0.2000", "TradeVolume": "297963128"}]
+    monkeypatch.setattr(provider, "_daily_rows", lambda market, refresh=False: (official_rows if market == "TWSE" else [], None, False))
+    monkeypatch.setattr(provider, "_industry_map", lambda: {})
+    monkeypatch.setattr(provider, "_json", lambda url: (_ for _ in ()).throw(RuntimeError("MIS unavailable")))
+    market_time = datetime(2026, 7, 31, 13, 30, tzinfo=TAIPEI)
+    monkeypatch.setattr(provider, "get_latest_quote", lambda stock, refresh=False: Quote(stock.code, 102.85, 9.35, 10.0, 334_568_000, DataMeta("Yahoo Finance 最新報價", market_time, market_time)))
+    quote = provider.get_hot_lists(refresh=True)["gainers"][0]
+    assert quote["code"] == "0050"
+    assert quote["change_pct"] == 10.0
+    assert quote["market_time"] == market_time
+    assert quote["source"] == "Yahoo Finance 最新報價"
