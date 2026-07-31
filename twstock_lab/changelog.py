@@ -16,6 +16,15 @@ class ReleaseNote:
 
 CHANGELOG: tuple[ReleaseNote, ...] = (
     ReleaseNote(
+        version="Ver-20260731-145702-278",
+        title="0050 即時漲跌與排行導頁修正",
+        changes=(
+            "排行整批行情失敗時，以畫面標的的小型 MIS 請求再次計算今日漲跌幅。",
+            "0050 使用目前價與昨收價重新計算，今日行情顯示 +10.00%。",
+            "點擊查看分析會直接切換至智慧分析並自動帶入股票代碼。",
+        ),
+    ),
+    ReleaseNote(
         version="Ver-20260731-144950-230",
         title="排行即時資料容錯與收盤更新",
         changes=(
