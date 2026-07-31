@@ -16,6 +16,7 @@ TAIPEI = timezone(timedelta(hours=8))
 TWSE = "https://openapi.twse.com.tw/v1"
 TPEX = "https://www.tpex.org.tw/openapi/v1"
 YAHOO = "https://query1.finance.yahoo.com/v8/finance/chart"
+TWSE_MIS = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 
 INDUSTRY_NAMES = {
     "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維",
@@ -328,10 +329,51 @@ class HybridTaiwanProvider:
                 price = _number(r.get("ClosingPrice") or r.get("Close"))
                 change = _number(r.get("Change"))
                 previous = price - change
+                market_time = _roc_date(r.get("Date", ""))
                 rows.append({"code": code, "name": r.get("Name") or r.get("CompanyName"), "market": market,
                              "industry": "ETF" if is_etf else industries.get(code, "其他業"),
                              "price": price, "change_pct": change / previous * 100 if previous else 0,
-                             "volume": _number(r.get("TradeVolume") or r.get("TradingShares"))})
+                             "volume": _number(r.get("TradeVolume") or r.get("TradingShares")),
+                             "market_time": market_time, "source": f"{market} 官方盤後行情"})
+        if refresh and rows:
+            # OpenAPI may still contain the previous close during market hours.
+            # Refresh likely ranking candidates with the exchange MIS snapshot.
+            by_volume = sorted(rows, key=lambda x: x["volume"], reverse=True)[:80]
+            by_gain = sorted(rows, key=lambda x: x["change_pct"], reverse=True)[:60]
+            by_loss = sorted(rows, key=lambda x: x["change_pct"])[:60]
+            candidates = {item["code"]: item for item in (*by_volume, *by_gain, *by_loss)}
+            live_codes: set[str] = set()
+            candidate_items = list(candidates.values())
+            for start in range(0, len(candidate_items), 80):
+                batch = candidate_items[start:start + 80]
+                channels = "|".join(
+                    f"{'tse' if item['market'] == 'TWSE' else 'otc'}_{item['code']}.tw"
+                    for item in batch
+                )
+                try:
+                    payload = self._json(f"{TWSE_MIS}?ex_ch={channels}&json=1&delay=0")
+                except Exception:
+                    continue
+                for quote in payload.get("msgArray", []):
+                    code = str(quote.get("c", "")).strip()
+                    item = candidates.get(code)
+                    price = _number(quote.get("z"))
+                    previous = _number(quote.get("y"))
+                    if item is None or price <= 0 or previous <= 0:
+                        continue
+                    item["price"] = price
+                    item["change_pct"] = (price / previous - 1) * 100
+                    item["volume"] = _number(quote.get("v")) * 1000
+                    try:
+                        item["market_time"] = datetime.strptime(
+                            f"{quote.get('d')} {quote.get('t')}", "%Y%m%d %H:%M:%S"
+                        ).replace(tzinfo=TAIPEI)
+                    except (TypeError, ValueError):
+                        item["market_time"] = datetime.now(TAIPEI)
+                    item["source"] = "TWSE MIS 盤中行情"
+                    live_codes.add(code)
+            if live_codes:
+                rows = [item for item in candidate_items if item["code"] in live_codes]
         return {
             "volume": sorted(rows, key=lambda x: x["volume"], reverse=True)[:50],
             "gainers": sorted(rows, key=lambda x: x["change_pct"], reverse=True)[:50],
