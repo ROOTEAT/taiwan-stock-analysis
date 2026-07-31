@@ -16,6 +16,16 @@ class ReleaseNote:
 
 CHANGELOG: tuple[ReleaseNote, ...] = (
     ReleaseNote(
+        version="Ver-20260731-150316-521",
+        title="排行舊快取強制失效",
+        changes=(
+            "每次版本更新會重新建立行情資料供應器，避免沿用舊版解析結果。",
+            "排行使用新的 MIS 全市場快取命名空間。",
+            "今日資料尚未取得時改顯示待更新，不再把昨日跌幅標示成今日行情。",
+            "收盤後提供手動重新抓取按鈕，不持續自動更新。",
+        ),
+    ),
+    ReleaseNote(
         version="Ver-20260731-145702-278",
         title="0050 即時漲跌與排行導頁修正",
         changes=(
