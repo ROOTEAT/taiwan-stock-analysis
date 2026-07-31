@@ -203,6 +203,22 @@ h3 {font-size:clamp(1.15rem, 1.8vw, 1.5rem) !important;}
 .portfolio-card-meta.advice-red {background:rgba(239,68,68,.12);}
 .portfolio-card-meta .reason {display:block; margin-top:.18rem; opacity:.76; font-size:.82rem;}
 .portfolio-card-meta .level {font-weight:750;}
+.industry-summary-card {
+  min-height:164px;
+  height:100%;
+  padding:18px 20px;
+  border-radius:16px;
+  border:1px solid rgba(148,163,184,.25);
+  display:flex;
+  flex-direction:column;
+  justify-content:flex-start;
+  line-height:1.55;
+}
+.industry-summary-card strong {font-size:1.02rem; margin-bottom:.45rem;}
+.industry-summary-card span {font-size:.9rem; opacity:.9;}
+.industry-summary-card.strong {background:rgba(239,68,68,.13); border-color:rgba(248,113,113,.42);}
+.industry-summary-card.neutral {background:rgba(245,158,11,.12); border-color:rgba(250,204,21,.38);}
+.industry-summary-card.weak {background:rgba(34,197,94,.11); border-color:rgba(74,222,128,.35);}
 .result-count {
   padding:.45rem .7rem; border-radius:10px;
   background:rgba(56,189,248,.08); border:1px solid rgba(125,211,252,.18);
@@ -351,7 +367,10 @@ def get_portfolio_store():
 
 
 @st.cache_resource
-def get_cloud_client() -> SupabaseClient | None:
+def get_cloud_client(cache_version: str = CURRENT_VERSION) -> SupabaseClient | None:
+    # Include the release in Streamlit's resource-cache key so a deployment
+    # cannot keep an instance of an older SupabaseClient class.
+    _ = cache_version
     try:
         url = str(st.secrets.get("SUPABASE_URL", "")).strip()
         key = str(st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", "")).strip()
@@ -1173,23 +1192,32 @@ def render_market_overview(provider: HybridTaiwanProvider) -> None:
 
 def render_industry_heat(provider: HybridTaiwanProvider) -> None:
     st.markdown("### 產業熱度與警示")
-    st.caption("依產業平均漲跌、上漲家數比例與成交活躍度整理；紅色偏強、黃色觀察、綠色偏弱。")
+    st.caption(
+        "圓餅顏色用來區分產業；右側排行才使用紅、黃、綠表示相對強弱。"
+        "熱度依平均漲跌、上漲家數比例與成交活躍度整理。"
+    )
+    loading = st.progress(5, text="正在讀取市場行情… 5%")
     clock = market_clock("台股")
     try:
         snapshot = provider.get_hot_lists(
             refresh=clock.status in ("交易中", "已收盤")
         ).get("all", [])
     except Exception as exc:
+        loading.empty()
         st.warning(f"產業熱度暫時無法取得：{exc}")
         return
+    loading.progress(45, text="行情取得完成，正在整理產業… 45%")
     frame = pd.DataFrame(snapshot)
     if frame.empty or "industry" not in frame:
+        loading.empty()
         st.info("目前沒有足夠的產業行情資料。")
         return
     frame = frame[(frame["industry"].notna()) & (frame["industry"] != "ETF")].copy()
     if frame.empty:
+        loading.empty()
         st.info("目前沒有足夠的個股產業資料。")
         return
+    loading.progress(65, text="正在計算產業熱度… 65%")
     industry = (
         frame.groupby("industry", as_index=False)
         .agg(
@@ -1204,10 +1232,21 @@ def render_industry_heat(provider: HybridTaiwanProvider) -> None:
         + industry["平均漲跌幅"].clip(-10, 10) * 4
         + (industry["上漲比例"] - 0.5) * 30
     ).clip(0, 100)
+    lower_cut = float(industry["熱度分數"].quantile(.25))
+    upper_cut = float(industry["熱度分數"].quantile(.75))
     industry["狀態"] = industry["熱度分數"].apply(
-        lambda score: "強勢關注" if score >= 60 else "弱勢警示" if score < 40 else "中性觀察"
+        lambda score: (
+            "相對強勢" if score >= upper_cut
+            else "相對弱勢" if score <= lower_cut
+            else "中性觀察"
+        )
     )
-    color_map = {"強勢關注": "#ff5b61", "中性觀察": "#facc15", "弱勢警示": "#22c55e"}
+    color_map = {"相對強勢": "#ff5b61", "中性觀察": "#facc15", "相對弱勢": "#22c55e"}
+    pie_palette = [
+        "#38bdf8", "#a78bfa", "#fb7185", "#34d399", "#fbbf24", "#60a5fa",
+        "#f472b6", "#2dd4bf", "#c084fc", "#fb923c", "#4ade80", "#818cf8",
+    ]
+    loading.progress(80, text="正在繪製圖表… 80%")
 
     chart_left, chart_right = st.columns([1, 1.35])
     pie_data = industry.nlargest(12, "成交量").copy()
@@ -1216,7 +1255,7 @@ def render_industry_heat(provider: HybridTaiwanProvider) -> None:
             labels=pie_data["industry"],
             values=pie_data["成交量"],
             hole=.58,
-            marker={"colors": [color_map[state] for state in pie_data["狀態"]]},
+            marker={"colors": pie_palette[:len(pie_data)], "line": {"color": "#0f172a", "width": 1}},
             customdata=pie_data[["平均漲跌幅", "上漲比例", "熱度分數"]],
             hovertemplate=(
                 "%{label}<br>成交量占比 %{percent}<br>平均漲跌 %{customdata[0]:+.2f}%"
@@ -1230,6 +1269,7 @@ def render_industry_heat(provider: HybridTaiwanProvider) -> None:
             paper_bgcolor="rgba(0,0,0,0)",
             font={"color": "#dbeafe"},
             legend={"orientation": "h", "y": -0.05},
+            uniformtext={"minsize": 11, "mode": "hide"},
         )
         st.plotly_chart(pie, use_container_width=True, key="industry-heat-pie")
     with chart_right:
@@ -1261,20 +1301,30 @@ def render_industry_heat(provider: HybridTaiwanProvider) -> None:
     weak = industry.sort_values("熱度分數").head(5)
     status_counts = industry["狀態"].value_counts()
     summary_cols = st.columns(3)
-    summary_cols[0].success(
-        "強勢關注\n\n" + "、".join(
-            f"{row.industry} {row.熱度分數:.0f}" for row in strong.itertuples()
-        )
+    strong_text = "、".join(
+        f"{row.industry} {row.熱度分數:.0f}" for row in strong.itertuples()
     )
-    summary_cols[1].warning(
-        f"中性觀察：{status_counts.get('中性觀察', 0)} 個產業\n\n"
-        "強勢不代表適合追價，仍需查看個股估值與風險。"
+    weak_text = "、".join(
+        f"{row.industry} {row.熱度分數:.0f}" for row in weak.itertuples()
     )
-    summary_cols[2].error(
-        "弱勢警示\n\n" + "、".join(
-            f"{row.industry} {row.熱度分數:.0f}" for row in weak.itertuples()
-        )
+    summary_cols[0].markdown(
+        f'<div class="industry-summary-card strong"><strong>🔴 相對強勢</strong>'
+        f'<span>{strong_text}</span></div>',
+        unsafe_allow_html=True,
     )
+    summary_cols[1].markdown(
+        f'<div class="industry-summary-card neutral"><strong>🟡 中性觀察</strong>'
+        f'<span>{status_counts.get("中性觀察", 0)} 個產業<br>'
+        "強勢不代表適合追價，仍需查看個股估值與風險。</span></div>",
+        unsafe_allow_html=True,
+    )
+    summary_cols[2].markdown(
+        f'<div class="industry-summary-card weak"><strong>🟢 相對弱勢</strong>'
+        f'<span>{weak_text}</span></div>',
+        unsafe_allow_html=True,
+    )
+    loading.progress(100, text="產業熱度完成 100%")
+    loading.empty()
     if len(frame) < 100:
         st.caption(f"目前以 {len(frame)} 檔可取得行情的股票作為產業樣本，資料覆蓋不足時請降低解讀信心。")
 
@@ -1332,7 +1382,7 @@ def render_trend_rankings(
         if not candidates:
             st.info("目前沒有符合此產業條件的候選股票。")
             return
-        progress = st.progress(0, text="正在建立技術趨勢排行…")
+        progress = st.progress(0, text="正在建立技術趨勢排行… 0%")
         scanned = []
         for index, code in enumerate(candidates):
             try:
@@ -1364,9 +1414,11 @@ def render_trend_rankings(
                 })
             except Exception:
                 pass
+            completed = index + 1
+            percent = round(completed / len(candidates) * 100)
             progress.progress(
-                (index + 1) / len(candidates),
-                text=f"已分析 {index + 1}/{len(candidates)}",
+                completed / len(candidates),
+                text=f"已分析 {completed}/{len(candidates)}｜{percent}%",
             )
         progress.empty()
         st.session_state.trend_rank_results = scanned
@@ -1489,7 +1541,7 @@ def render_opportunity_scan(provider: HybridTaiwanProvider, horizon: str, risk_p
                 candidates.append(item["code"])
             if len(candidates) >= max_candidates:
                 break
-        progress = st.progress(0, text="正在分析候選標的…")
+        progress = st.progress(0, text="正在分析候選標的… 0%")
         results = []
         for index, code in enumerate(candidates):
             try:
@@ -1498,7 +1550,12 @@ def render_opportunity_scan(provider: HybridTaiwanProvider, horizon: str, risk_p
                 ))
             except Exception:
                 pass
-            progress.progress((index + 1) / len(candidates), text=f"已分析 {index + 1}/{len(candidates)}")
+            completed = index + 1
+            percent = round(completed / len(candidates) * 100)
+            progress.progress(
+                completed / len(candidates),
+                text=f"已分析 {completed}/{len(candidates)}｜{percent}%",
+            )
         progress.empty()
         st.session_state.opportunity_results = sorted(
             results, key=lambda x: (x.confidence >= 60, x.overall_score), reverse=True
@@ -1782,15 +1839,38 @@ def render_admin_dashboard() -> None:
         "也不提供代替使用者修改組合的功能。"
     )
     refresh_admin = st.button("重新整理管理數據", type="primary", key="admin-refresh")
+    admin_loading = st.progress(10, text="正在連接管理資料… 10%")
     try:
-        users, portfolios = client.get_admin_overview()
+        if hasattr(client, "get_admin_overview"):
+            users, portfolios = client.get_admin_overview()
+        else:
+            # Streamlit Cloud may briefly retain an instance created by the
+            # previous app version. Keep the admin view compatible until that
+            # resource cache is naturally replaced.
+            users = client._request(
+                "GET",
+                "app_users",
+                params={"select": "id,username,created_at", "order": "created_at.desc"},
+            ) or []
+            admin_loading.progress(55, text="帳號資料完成，正在讀取組合… 55%")
+            portfolios = client._request(
+                "GET",
+                "portfolio_items",
+                params={
+                    "select": "user_id,code,shares,average_cost,note,updated_at",
+                    "order": "updated_at.desc",
+                },
+            ) or []
     except Exception as exc:
+        admin_loading.empty()
         st.error(f"管理數據載入失敗：{exc}")
         return
+    admin_loading.progress(75, text="正在彙整統計資料… 75%")
 
     user_frame = pd.DataFrame(users)
     portfolio_frame = pd.DataFrame(portfolios)
     if user_frame.empty:
+        admin_loading.empty()
         st.info("目前尚無使用者資料。")
         return
 
@@ -1816,6 +1896,8 @@ def render_admin_dashboard() -> None:
     held = joined[joined["shares"] > 0]
     watch = joined[joined["shares"] <= 0]
     total_cost = float(held["總成本"].sum()) if not held.empty else 0
+    admin_loading.progress(100, text="管理數據載入完成 100%")
+    admin_loading.empty()
     metric_cols = st.columns(4)
     metric_cols[0].metric("註冊帳號", f"{len(user_frame):,}")
     metric_cols[1].metric("持有紀錄", f"{len(held):,}")
