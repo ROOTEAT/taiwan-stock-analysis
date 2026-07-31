@@ -16,6 +16,16 @@ class ReleaseNote:
 
 CHANGELOG: tuple[ReleaseNote, ...] = (
     ReleaseNote(
+        version="Ver-20260731-154858-483",
+        title="產業圖表可讀性與載入狀態修正",
+        changes=(
+            "產業成交圓餅圖改用十二色分類，避免市場普漲時整張圖呈現單一紅色。",
+            "熱度排行改用相對強勢、中性與相對弱勢分組，摘要卡統一固定高度。",
+            "產業熱度、近期關注、趨勢排行與管理後台新增載入進度及百分比。",
+            "修正平台保留舊版 SupabaseClient 快取時管理後台無法載入的問題。",
+        ),
+    ),
+    ReleaseNote(
         version="Ver-20260731-154254-346",
         title="管理者數據後台",
         changes=(
