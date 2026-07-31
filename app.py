@@ -216,6 +216,19 @@ h3 {font-size:clamp(1.15rem, 1.8vw, 1.5rem) !important;}
 .trend-bull {background:rgba(239,68,68,.13); border:1px solid rgba(248,113,113,.5);}
 .trend-bear {background:rgba(34,197,94,.13); border:1px solid rgba(74,222,128,.5);}
 .trend-neutral {background:rgba(245,158,11,.13); border:1px solid rgba(251,191,36,.5);}
+.hot-rank-card {
+  padding:.7rem .8rem;
+  margin:.35rem 0;
+  border:1px solid rgba(148,163,184,.22);
+  border-radius:14px;
+  background:rgba(255,255,255,.045);
+}
+.hot-rank-card .rank-line {display:flex;justify-content:space-between;align-items:baseline;gap:.65rem;}
+.hot-rank-card .stock-name {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:750;}
+.hot-rank-card .change-up {color:#ff7b7d;font-weight:800;white-space:nowrap;}
+.hot-rank-card .change-down {color:#4ade80;font-weight:800;white-space:nowrap;}
+.hot-rank-card .change-flat {color:#facc15;font-weight:800;white-space:nowrap;}
+.hot-rank-card .rank-meta {margin-top:.2rem;color:rgba(226,232,240,.68);font-size:.78rem;}
 .rooteat-easter-egg {
   position:fixed;
   right:22px;
@@ -988,9 +1001,9 @@ def render_hot_list(provider: HybridTaiwanProvider) -> None:
         return
     refreshed_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     if is_trading:
-        st.caption(f"🟢 盤中排行每 10 秒自動更新｜本次更新：{refreshed_at}")
+        st.caption(f"🟢 盤中排行每 10 秒自動更新｜最右側＝相較昨收漲跌幅｜本次更新：{refreshed_at}")
     else:
-        st.caption(f"⚪ 目前{clock.status}，顯示最近官方排行｜檢查時間：{refreshed_at}")
+        st.caption(f"⚪ 目前{clock.status}，顯示最近官方盤後排行｜最右側＝相較前一交易日收盤價｜檢查時間：{refreshed_at}")
     industries = sorted({stock.industry or "其他業" for stock in provider.search_stocks()})
     selected_industry = st.selectbox(
         "產業分類",
@@ -1007,9 +1020,24 @@ def render_hot_list(provider: HybridTaiwanProvider) -> None:
                 ranking = [item for item in ranking if item.get("industry") == selected_industry]
             if not ranking:
                 st.caption("此產業目前沒有進入前 50 名的標的。")
-            for item in ranking[:10]:
-                label = f"{item['code']} {item['name']}｜{item.get('industry', '其他業')}｜{item['change_pct']:+.2f}%"
-                if st.button(label, key=f"hot-{key}-{item['code']}", use_container_width=True):
+            for rank, item in enumerate(ranking[:10], start=1):
+                change_class = (
+                    "change-up" if item["change_pct"] > 0
+                    else "change-down" if item["change_pct"] < 0
+                    else "change-flat"
+                )
+                direction = "▲" if item["change_pct"] > 0 else "▼" if item["change_pct"] < 0 else "—"
+                market_time = item.get("market_time")
+                time_text = market_time.astimezone().strftime("%m/%d %H:%M") if market_time else "時間未提供"
+                st.markdown(
+                    f'<div class="hot-rank-card">' 
+                    f'<div class="rank-line"><span class="stock-name">{rank}. {item["code"]} {item["name"]}</span>'
+                    f'<span class="{change_class}">{direction} {item["change_pct"]:+.2f}%</span></div>'
+                    f'<div class="rank-meta">{item.get("industry", "其他業")}　｜　'
+                    f'現價 {item["price"]:,.2f}　｜　{time_text}</div></div>',
+                    unsafe_allow_html=True,
+                )
+                if st.button("查看分析", key=f"hot-{key}-{item['code']}", use_container_width=True):
                     st.session_state.pending_stock = item["code"]
                     st.rerun()
 
