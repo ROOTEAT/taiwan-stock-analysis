@@ -293,7 +293,9 @@ h3 {font-size:clamp(1.15rem, 1.8vw, 1.5rem) !important;}
 
 
 @st.cache_resource
-def get_provider() -> HybridTaiwanProvider:
+def get_provider(cache_version: str) -> HybridTaiwanProvider:
+    # Include the release in the resource key so old provider instances cannot survive deployments.
+    _ = cache_version
     return HybridTaiwanProvider()
 
 
@@ -1004,6 +1006,12 @@ def _render_hot_list_content(provider: HybridTaiwanProvider) -> None:
     clock = market_clock("台股")
     is_trading = clock.status == "交易中"
     use_current_day_snapshot = clock.status in ("交易中", "已收盤")
+    if clock.status == "已收盤" and st.button(
+        "重新抓取今日收盤排行",
+        key="refresh-closed-market-ranking",
+        use_container_width=True,
+    ):
+        provider.cache.delete("hot:mis:full-market:v3")
     try:
         hot = provider.get_hot_lists(refresh=use_current_day_snapshot)
     except Exception as exc:
@@ -1041,6 +1049,20 @@ def _render_hot_list_content(provider: HybridTaiwanProvider) -> None:
                 direction = "▲" if item["change_pct"] > 0 else "▼" if item["change_pct"] < 0 else "—"
                 market_time = item.get("market_time")
                 source = item.get("source", "來源未提供")
+                expects_today = clock.status in ("交易中", "已收盤")
+                is_current = bool(
+                    market_time
+                    and (
+                        not expects_today
+                        or market_time.date() == datetime.now(market_time.tzinfo).date()
+                    )
+                )
+                if expects_today and not is_current:
+                    change_class = "change-flat"
+                    direction = "⚠"
+                    change_text = "今日行情待更新"
+                else:
+                    change_text = f"{direction} {item['change_pct']:+.2f}%"
                 if market_time:
                     local_market_time = market_time.astimezone()
                     if "盤後" in source or (local_market_time.hour == 0 and local_market_time.minute == 0):
@@ -1057,7 +1079,7 @@ def _render_hot_list_content(provider: HybridTaiwanProvider) -> None:
                 st.markdown(
                     f'<div class="hot-rank-card">' 
                     f'<div class="rank-line"><span class="stock-name">{rank}. {item["code"]} {item["name"]}</span>'
-                    f'<span class="{change_class}">{direction} {item["change_pct"]:+.2f}%</span></div>'
+                    f'<span class="{change_class}">{change_text}</span></div>'
                     f'<div class="rank-meta">{item.get("industry", "其他業")}　｜　'
                     f'現價 {item["price"]:,.2f}　｜　{time_text} · {source_text}</div></div>',
                     unsafe_allow_html=True,
@@ -1470,7 +1492,7 @@ if public_demo_mode():
     restore_auth_cookie()
     render_cloud_login()
 
-provider = get_provider()
+provider = get_provider(CURRENT_VERSION)
 render_page_header("上市＋上櫃股票與 ETF｜最新行情輔助 × 多構面風險評分｜不構成投資建議")
 if beginner_mode():
     render_beginner_guide()
