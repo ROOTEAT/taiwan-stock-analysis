@@ -342,7 +342,7 @@ class HybridTaiwanProvider:
             candidates = {item["code"]: item for item in rows}
             live_codes: set[str] = set()
             candidate_items = list(candidates.values())
-            cached_snapshot = self.cache.get("hot:mis:full-market")
+            cached_snapshot = self.cache.get("hot:mis:full-market:v3")
             if cached_snapshot:
                 live_quotes = cached_snapshot[0]
             else:
@@ -367,7 +367,7 @@ class HybridTaiwanProvider:
                         and now.hour >= 9
                         and (now.hour < 13 or (now.hour == 13 and now.minute < 30))
                     )
-                    self.cache.set("hot:mis:full-market", live_quotes, 10 if market_open else 300)
+                    self.cache.set("hot:mis:full-market:v3", live_quotes, 10 if market_open else 300)
             for quote in live_quotes:
                 code = str(quote.get("c", "")).strip()
                 item = candidates.get(code)
