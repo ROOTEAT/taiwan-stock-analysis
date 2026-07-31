@@ -1,4 +1,5 @@
 from twstock_lab.cloud_storage import (
+    SupabaseClient,
     hash_password,
     normalize_username,
     sign_session_token,
@@ -54,3 +55,24 @@ def test_session_token_rejects_tampering():
         )
         is None
     )
+
+
+def test_admin_overview_never_selects_password_hashes(monkeypatch):
+    client = SupabaseClient("https://example.supabase.co", "service-role-key")
+    calls = []
+
+    def fake_request(method, table, **kwargs):
+        calls.append((method, table, kwargs["params"]["select"]))
+        return []
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    assert client.get_admin_overview() == ([], [])
+    assert calls == [
+        ("GET", "app_users", "id,username,created_at"),
+        (
+            "GET",
+            "portfolio_items",
+            "user_id,code,shares,average_cost,note,updated_at",
+        ),
+    ]
+    assert all("password" not in selected for _, _, selected in calls)
