@@ -217,7 +217,16 @@ h3 {font-size:clamp(1.15rem, 1.8vw, 1.5rem) !important;}
 .trend-bear {background:rgba(34,197,94,.13); border:1px solid rgba(74,222,128,.5);}
 .trend-neutral {background:rgba(245,158,11,.13); border:1px solid rgba(251,191,36,.5);}
 .hot-rank-card {
-  padding:.7rem .8rem;
+  width:100%;
+  height:82px;
+  min-height:82px;
+  max-height:82px;
+  box-sizing:border-box;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  overflow:hidden;
+  padding:.65rem .8rem;
   margin:.35rem 0;
   border:1px solid rgba(148,163,184,.22);
   border-radius:14px;
@@ -228,7 +237,8 @@ h3 {font-size:clamp(1.15rem, 1.8vw, 1.5rem) !important;}
 .hot-rank-card .change-up {color:#ff7b7d;font-weight:800;white-space:nowrap;}
 .hot-rank-card .change-down {color:#4ade80;font-weight:800;white-space:nowrap;}
 .hot-rank-card .change-flat {color:#facc15;font-weight:800;white-space:nowrap;}
-.hot-rank-card .rank-meta {margin-top:.2rem;color:rgba(226,232,240,.68);font-size:.78rem;}
+.hot-rank-card .rank-meta {margin-top:.2rem;color:rgba(226,232,240,.68);font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+[class*="st-key-hot-"] .stButton > button {height:44px;min-height:44px;max-height:44px;}
 .rooteat-easter-egg {
   position:fixed;
   right:22px;
