@@ -16,6 +16,14 @@ class ReleaseNote:
 
 CHANGELOG: tuple[ReleaseNote, ...] = (
     ReleaseNote(
+        version="Ver-20260731-141045-844",
+        title="作者簽名彩蛋",
+        changes=(
+            "在頁面右下角加入 Rooteat 手寫草寫作者簽名。",
+            "簽名支援滑鼠懸停發光與點擊展開彩蛋訊息。",
+        ),
+    ),
+    ReleaseNote(
         version="Ver-20260731-140525-086",
         title="更新日誌上線",
         changes=(
