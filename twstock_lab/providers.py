@@ -69,6 +69,8 @@ class HybridTaiwanProvider:
         self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "Mozilla/5.0 TaiwanStockResearch/1.0"})
+        self._stock_list_cache: list[StockInfo] = []
+        self._stock_list_cached_at: datetime | None = None
 
     def _json(self, url: str, *, tpex: bool = False):
         verify = not tpex
@@ -119,30 +121,39 @@ class HybridTaiwanProvider:
         return industries
 
     def search_stocks(self, query: str = "") -> list[StockInfo]:
-        stocks: dict[str, StockInfo] = {}
-        industries = self._industry_map()
-        for market in ("TWSE", "TPEx"):
-            try:
-                rows, _, _ = self._daily_rows(market)
-            except Exception:
-                continue
-            for row in rows:
-                code = str(row.get("Code") or row.get("SecuritiesCompanyCode") or "").strip()
-                name = str(row.get("Name") or row.get("CompanyName") or "").strip()
-                is_stock = len(code) == 4 and code.isdigit() and not code.startswith("0")
-                is_etf = 4 <= len(code) <= 6 and code.isdigit() and code.startswith("00")
-                if is_stock or is_etf:
-                    stocks[code] = StockInfo(
-                        code, name, market,
-                        industry="ETF" if is_etf else industries.get(code, "其他業"),
-                        asset_type="ETF" if is_etf else "STOCK",
-                    )
+        now = datetime.now(TAIPEI)
+        cache_fresh = (
+            self._stock_list_cache
+            and self._stock_list_cached_at is not None
+            and (now - self._stock_list_cached_at).total_seconds() < 3600
+        )
+        if not cache_fresh:
+            stocks: dict[str, StockInfo] = {}
+            industries = self._industry_map()
+            for market in ("TWSE", "TPEx"):
+                try:
+                    rows, _, _ = self._daily_rows(market)
+                except Exception:
+                    continue
+                for row in rows:
+                    code = str(row.get("Code") or row.get("SecuritiesCompanyCode") or "").strip()
+                    name = str(row.get("Name") or row.get("CompanyName") or "").strip()
+                    is_stock = len(code) == 4 and code.isdigit() and not code.startswith("0")
+                    is_etf = 4 <= len(code) <= 6 and code.isdigit() and code.startswith("00")
+                    if is_stock or is_etf:
+                        stocks[code] = StockInfo(
+                            code, name, market,
+                            industry="ETF" if is_etf else industries.get(code, "其他業"),
+                            asset_type="ETF" if is_etf else "STOCK",
+                        )
+            self._stock_list_cache = sorted(stocks.values(), key=lambda stock: stock.code)
+            self._stock_list_cached_at = now
         text = query.strip().lower()
         result = [
-            s for s in stocks.values()
+            s for s in self._stock_list_cache
             if not text or text in s.code.lower() or text in s.name.lower() or text in s.industry.lower()
         ]
-        return sorted(result, key=lambda s: s.code)
+        return result
 
     def get_stock(self, code: str) -> StockInfo:
         matches = [s for s in self.search_stocks(code) if s.code == code]
@@ -547,4 +558,3 @@ class HybridTaiwanProvider:
             key=lambda event: event.ex_dividend_date or datetime.max.replace(tzinfo=TAIPEI),
             reverse=True,
         )
-
