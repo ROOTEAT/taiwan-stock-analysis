@@ -338,7 +338,6 @@ def restore_auth_cookie() -> None:
         return
     st.session_state.cloud_user = {"id": user.id, "username": user.username}
     save_auth_cookie(st.session_state.cloud_user, force=True)
-    st.rerun()
 
 
 def render_cloud_login() -> None:
@@ -361,7 +360,7 @@ def render_cloud_login() -> None:
                 else:
                     st.session_state.cloud_user = {"id": user.id, "username": user.username}
                     save_auth_cookie(st.session_state.cloud_user, force=True)
-                    st.rerun()
+                    st.success("登入成功，正在載入你的專屬組合")
             except Exception as exc:
                 st.error(f"登入暫時失敗：{exc}")
     with register_tab:
@@ -381,7 +380,6 @@ def render_cloud_login() -> None:
                     st.session_state.cloud_user = {"id": user.id, "username": user.username}
                     save_auth_cookie(st.session_state.cloud_user, force=True)
                     st.success("帳號建立完成，正在載入你的專屬組合")
-                    st.rerun()
                 except Exception as exc:
                     st.error(str(exc))
     st.info("帳號資料經雜湊後保存；系統管理者也無法讀取你的原始密碼。")
@@ -401,9 +399,9 @@ BEGINNER_HELP = {
     "技術面": "從價格、趨勢、成交量及 RSI、MACD 等指標觀察市場行為。",
     "基本面": "從營收、獲利、估值等資料觀察公司體質與價格是否合理。",
     "籌碼面": "觀察外資、投信、自營商等市場參與者近期買賣方向。",
-
     "風險面": "綜合波動、回撤、流動性與估值風險；本系統已轉換為越高越穩健的分數。",
     "RSI(14)": "相對強弱指標，觀察近 14 日漲跌動能。常見解讀是高於 70 偏熱、低於 30 偏弱，但不能單獨當作買賣依據。",
+
     "MACD": "用不同速度的移動平均線觀察趨勢與動能；數值轉正或黃金交叉常被視為轉強訊號，但也可能落後價格。",
     "KD-K": "KD 指標中反應較快的 K 值，常用來觀察短期價格位置與轉折。",
     "KD-D": "KD 指標中較平滑的 D 值；K 向上穿越 D 常稱黃金交叉，向下穿越則稱死亡交叉。",
@@ -502,8 +500,8 @@ def render_beginner_guide() -> None:
 - **斐波那契回撤**：用 23.6%、38.2%、50%、61.8% 等比例標示潛在回撤位置；這些只是觀察區，不是自然法則。
 - **黃金交叉／死亡交叉**：較快的線向上／向下穿越較慢的線。交叉通常落後價格，不能保證後續方向。
 
-
 > 技術分析源自歷史資料，無法事先知道財報意外、政策、戰爭或其他突發事件；不同人畫出的趨勢線與型態也可能不同。應搭配基本面、籌碼、風險控管與部位規劃。
+
 
 [延伸閱讀：量化通技術分析教學懶人包](https://quantpass.org/technical-analysis-lists/)
 
@@ -603,9 +601,9 @@ def explain_kbar(row: pd.Series) -> tuple[str, str]:
     elif body / full_range >= 0.65:
         pattern = "長實體紅 K" if close > open_price else "長實體黑 K"
         meaning = "實體占當日波幅較高，代表當日方向力道較明顯；仍要確認是否有量能與趨勢配合。"
-
     else:
         pattern = "一般紅 K" if close > open_price else "一般黑 K"
+
         meaning = "當日有方向但強度並非極端，建議連同前後 K 棒、均線與成交量一起判讀。"
     return f"{pattern}｜{direction}", meaning
 
@@ -704,9 +702,9 @@ def render_indicator_explanation(chart_type: str, row: pd.Series) -> None:
             atr_pct = row.atr14 / row.close * 100 if row.close else float("nan")
             activity = "高於近期均量，交易較活躍" if pd.notna(volume_ratio) and volume_ratio >= 1 else "低於近期均量，交易相對清淡"
             cols = st.columns(4)
-
             cols[0].metric("ATR(14)", f"{row.atr14:,.2f}")
             cols[1].metric("ATR／股價", f"{atr_pct:.2f}%")
+
             cols[2].metric("成交量", f"{row.volume / 1000:,.0f} 張")
             cols[3].metric("相對20日均量", f"{volume_ratio:.2f} 倍" if pd.notna(volume_ratio) else "資料不足")
             st.info(f"這個位置代表：成交量{activity}。ATR 越高表示波動越大，但 ATR 本身不判斷上漲或下跌。")
@@ -805,9 +803,9 @@ def render_indicator_chart(prices: pd.DataFrame, display_range: str, chart_type:
 
 def render_price_chart(prices: pd.DataFrame, display_range: str = "半年內") -> None:
     recent = filter_chart_range(prices, display_range)
-
     recent["change_pct"] = recent["close"].pct_change().mul(100)
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25], vertical_spacing=0.04)
+
     fig.add_trace(go.Candlestick(
         x=recent.date, open=recent.open, high=recent.high, low=recent.low, close=recent.close, name="K 線",
         increasing={"line": {"color": UP_COLOR, "width": 1.5}, "fillcolor": UP_COLOR},
@@ -906,8 +904,8 @@ def render_price_chart(prices: pd.DataFrame, display_range: str = "半年內") -
                         st.info(f"這根 K 棒代表：{meaning}")
                         st.caption("型態名稱是依單根 K 棒比例做的輔助辨識，不代表下一交易日必然上漲或下跌。")
         else:
-
             st.info("🖱️ 尚未選取 K 棒：請直接點一下圖中的任一根 K 棒，下方就會顯示該日型態解說。")
+
 
 
 def render_hot_list(provider: HybridTaiwanProvider) -> None:
@@ -1007,9 +1005,9 @@ def render_opportunity_scan(provider: HybridTaiwanProvider, horizon: str, risk_p
         )
         if selected_horizon != st.session_state._previous_scan_horizon:
             st.session_state.pop("opportunity_results", None)
-
             st.session_state._previous_scan_horizon = selected_horizon
         horizon = selected_horizon or "波段"
+
         range_text = {
             "短線": "1–10 個交易日｜技術與籌碼權重較高",
             "波段": "1–3 個月｜技術、基本與籌碼均衡",
@@ -1108,9 +1106,9 @@ def render_dividend_calendar(provider: HybridTaiwanProvider, analyzed) -> None:
     now = datetime.now().astimezone()
     rows = []
     warnings = []
-
     for item, result, *_ in analyzed:
         if item.shares <= 0 or result is None:
+
             continue
         try:
             events = provider.get_dividend_events(result.stock)
@@ -1209,9 +1207,9 @@ def render_portfolio(provider: HybridTaiwanProvider, horizon: str, risk_profile:
 
     held = [row for row in analyzed if row[0].shares > 0]
     market_value = sum(row[0].shares * row[1].quote.price for row in held if row[1])
-
     total_cost = sum(row[0].shares * row[0].average_cost for row in held)
     pnl = market_value - total_cost
+
     status_counts = {
         "green": sum(row[4] == "advice-green" for row in held),
         "yellow": sum(row[4] == "advice-yellow" for row in held),
@@ -1310,9 +1308,9 @@ def render_portfolio(provider: HybridTaiwanProvider, horizon: str, risk_profile:
                         with st.form(f"edit-{item.code}"):
                             e1, e2, e3 = st.columns([1, 1, 2])
                             new_shares = e1.number_input("股數", min_value=0.0, value=float(item.shares), step=100.0, key=f"shares-{item.code}")
-
                             new_cost = e2.number_input("平均成本", min_value=0.0, value=float(item.average_cost), step=1.0, key=f"cost-{item.code}")
                             new_note = e3.text_input("備註", value=item.note, key=f"note-{item.code}")
+
                             if st.form_submit_button("儲存修改", type="primary"):
                                 store.upsert(PortfolioItem(item.code, new_shares, new_cost, new_note))
                                 st.rerun()
@@ -1350,7 +1348,7 @@ with st.sidebar:
         if st.button("登出", key="cloud-logout"):
             clear_auth_cookie()
             st.session_state.pop("cloud_user", None)
-            st.rerun()
+            st.toast("已安全登出")
     elif public_demo_mode():
         st.warning("目前尚未連接雲端帳號，資料只暫存在本次工作階段。")
     st.toggle(
@@ -1411,9 +1409,9 @@ if page == "市場排行":
     st.stop()
 
 if page == "使用說明":
-
     st.markdown("""
     ## 使用方式
+
 
     1. 左側選擇「智慧分析」。
     2. 輸入股票或 ETF 代碼／名稱。
@@ -1512,9 +1510,9 @@ tabs = st.tabs(["綜合判斷", "技術分析", "基本籌碼", "歷史驗證", 
 
 with tabs[0]:
     st.markdown("### 理性數據綜合建議")
-
     if result.signal.startswith("偏多"):
         recommendation = "可列入分批布局觀察，但不建議追價；以觀察區與失效價管理風險。"
+
     elif "觀望" in result.signal:
         recommendation = "目前先觀望，等待趨勢、動能或基本數據改善後再重新評估。"
     else:
@@ -1613,9 +1611,9 @@ with tabs[2]:
     if asset_type == "STOCK":
         metric_card(v4, "月營收年增", f"{result.revenue.get('yoy', float('nan')):.2f}%")
         st.markdown("### 籌碼")
-
         st.json(result.institutional)
         if "法人籌碼資料不完整" in result.missing_data:
+
             st.warning("目前官方端點未提供完整三大法人個股資料，籌碼分數以可取得資料計算並降低信心度。")
     else:
         v4.metric("商品類型", "ETF")
