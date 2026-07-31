@@ -972,13 +972,21 @@ def render_price_chart(prices: pd.DataFrame, display_range: str = "半年內") -
 
 
 
+@st.fragment(run_every="10s")
 def render_hot_list(provider: HybridTaiwanProvider) -> None:
     st.subheader("市場熱門清單")
+    clock = market_clock("台股")
+    is_trading = clock.status == "交易中"
     try:
-        hot = provider.get_hot_lists()
+        hot = provider.get_hot_lists(refresh=is_trading)
     except Exception as exc:
         st.warning(f"暫時無法取得市場排行：{exc}")
         return
+    refreshed_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    if is_trading:
+        st.caption(f"🟢 盤中排行每 10 秒自動更新｜本次更新：{refreshed_at}")
+    else:
+        st.caption(f"⚪ 目前{clock.status}，顯示最近官方排行｜檢查時間：{refreshed_at}")
     industries = sorted({stock.industry or "其他業" for stock in provider.search_stocks()})
     selected_industry = st.selectbox(
         "產業分類",
