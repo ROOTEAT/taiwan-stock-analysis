@@ -216,6 +216,44 @@ h3 {font-size:clamp(1.15rem, 1.8vw, 1.5rem) !important;}
 .trend-bull {background:rgba(239,68,68,.13); border:1px solid rgba(248,113,113,.5);}
 .trend-bear {background:rgba(34,197,94,.13); border:1px solid rgba(74,222,128,.5);}
 .trend-neutral {background:rgba(245,158,11,.13); border:1px solid rgba(251,191,36,.5);}
+.rooteat-easter-egg {
+  position:fixed;
+  right:22px;
+  bottom:14px;
+  z-index:999;
+  text-align:right;
+  color:rgba(226,232,240,.42);
+  user-select:none;
+}
+.rooteat-easter-egg summary {
+  list-style:none;
+  cursor:pointer;
+  font-family:"Brush Script MT","Segoe Script","Lucida Handwriting",cursive;
+  font-size:2rem;
+  font-style:italic;
+  line-height:1;
+  letter-spacing:.04em;
+  transform:rotate(-5deg);
+  transition:color .25s ease, text-shadow .25s ease, transform .25s ease;
+}
+.rooteat-easter-egg summary::-webkit-details-marker {display:none;}
+.rooteat-easter-egg summary:hover,
+.rooteat-easter-egg[open] summary {
+  color:#7dd3fc;
+  text-shadow:0 0 8px rgba(56,189,248,.65),0 0 22px rgba(99,102,241,.55);
+  transform:rotate(-3deg) scale(1.08);
+}
+.rooteat-easter-egg span {
+  display:inline-block;
+  margin-top:.45rem;
+  padding:.45rem .7rem;
+  border:1px solid rgba(125,211,252,.28);
+  border-radius:10px;
+  color:#dbeafe;
+  background:rgba(9,17,31,.88);
+  box-shadow:0 8px 24px rgba(0,0,0,.28);
+  font-size:.76rem;
+}
 @media (min-width: 900px) {
   [data-testid="stSidebar"] {width:320px !important; min-width:320px !important; max-width:320px !important;}
   [data-testid="stSidebar"] > div:first-child {width:320px !important;}
@@ -306,6 +344,13 @@ def render_page_header(caption: str) -> None:
                     for change in release.changes:
                         st.markdown(f"- {change}")
         st.caption(CURRENT_VERSION)
+    st.markdown(
+        '<details class="rooteat-easter-egg">'
+        '<summary title="作者留下的小彩蛋">Rooteat</summary>'
+        '<span>Found it ✦ Designed &amp; crafted by Rooteat</span>'
+        '</details>',
+        unsafe_allow_html=True,
+    )
 
 
 def save_auth_cookie(user: dict[str, str], *, force: bool = False) -> None:
