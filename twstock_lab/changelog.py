@@ -16,6 +16,15 @@ class ReleaseNote:
 
 CHANGELOG: tuple[ReleaseNote, ...] = (
     ReleaseNote(
+        version="Ver-20260731-144950-230",
+        title="排行即時資料容錯與收盤更新",
+        changes=(
+            "MIS 全市場快照失敗時，改以最新個股報價校正畫面排行，避免顯示昨日漲跌。",
+            "行情欄改為日期、時間與來源狀態，不再只顯示時間未提供。",
+            "只有交易中每 10 秒更新；收盤後停止自動重跑並保留今日最終行情。",
+        ),
+    ),
+    ReleaseNote(
         version="Ver-20260731-144330-755",
         title="熱門排行卡片對齊",
         changes=(
