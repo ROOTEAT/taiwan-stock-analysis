@@ -16,6 +16,15 @@ class ReleaseNote:
 
 CHANGELOG: tuple[ReleaseNote, ...] = (
     ReleaseNote(
+        version="Ver-20260731-143547-784",
+        title="盤中排行資料與版面修正",
+        changes=(
+            "盤中排行改用證交所 MIS 快照校正最新價、成交量及相較昨收漲跌幅。",
+            "修正官方盤後舊資料可能被誤認為今日盤中漲跌的問題。",
+            "排行卡片重新排版，清楚顯示名次、股票、產業、現價、行情時間與漲跌幅。",
+        ),
+    ),
+    ReleaseNote(
         version="Ver-20260731-143004-991",
         title="密碼安全提醒",
         changes=(
