@@ -999,8 +999,7 @@ def render_price_chart(prices: pd.DataFrame, display_range: str = "半年內") -
 
 
 
-@st.fragment(run_every="10s")
-def render_hot_list(provider: HybridTaiwanProvider) -> None:
+def _render_hot_list_content(provider: HybridTaiwanProvider) -> None:
     st.subheader("市場熱門清單")
     clock = market_clock("台股")
     is_trading = clock.status == "交易中"
@@ -1041,18 +1040,43 @@ def render_hot_list(provider: HybridTaiwanProvider) -> None:
                 )
                 direction = "▲" if item["change_pct"] > 0 else "▼" if item["change_pct"] < 0 else "—"
                 market_time = item.get("market_time")
-                time_text = market_time.astimezone().strftime("%m/%d %H:%M") if market_time else "時間未提供"
+                source = item.get("source", "來源未提供")
+                if market_time:
+                    local_market_time = market_time.astimezone()
+                    if "盤後" in source or (local_market_time.hour == 0 and local_market_time.minute == 0):
+                        time_text = local_market_time.strftime("%m/%d 收盤")
+                    else:
+                        time_text = local_market_time.strftime("%m/%d %H:%M")
+                else:
+                    time_text = "行情日期未提供"
+                source_text = (
+                    "MIS 即時" if "MIS" in source
+                    else "Yahoo 最新" if "Yahoo" in source
+                    else "官方盤後"
+                )
                 st.markdown(
                     f'<div class="hot-rank-card">' 
                     f'<div class="rank-line"><span class="stock-name">{rank}. {item["code"]} {item["name"]}</span>'
                     f'<span class="{change_class}">{direction} {item["change_pct"]:+.2f}%</span></div>'
                     f'<div class="rank-meta">{item.get("industry", "其他業")}　｜　'
-                    f'現價 {item["price"]:,.2f}　｜　{time_text}</div></div>',
+                    f'現價 {item["price"]:,.2f}　｜　{time_text} · {source_text}</div></div>',
                     unsafe_allow_html=True,
                 )
                 if st.button("查看分析", key=f"hot-{key}-{item['code']}", use_container_width=True):
                     st.session_state.pending_stock = item["code"]
                     st.rerun()
+
+
+@st.fragment(run_every="10s")
+def _render_live_hot_list(provider: HybridTaiwanProvider) -> None:
+    _render_hot_list_content(provider)
+
+
+def render_hot_list(provider: HybridTaiwanProvider) -> None:
+    if market_clock("台股").status == "交易中":
+        _render_live_hot_list(provider)
+    else:
+        _render_hot_list_content(provider)
 
 
 def render_market_overview(provider: HybridTaiwanProvider) -> None:
