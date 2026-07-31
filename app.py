@@ -994,14 +994,17 @@ def render_hot_list(provider: HybridTaiwanProvider) -> None:
     st.subheader("市場熱門清單")
     clock = market_clock("台股")
     is_trading = clock.status == "交易中"
+    use_current_day_snapshot = clock.status in ("交易中", "已收盤")
     try:
-        hot = provider.get_hot_lists(refresh=is_trading)
+        hot = provider.get_hot_lists(refresh=use_current_day_snapshot)
     except Exception as exc:
         st.warning(f"暫時無法取得市場排行：{exc}")
         return
     refreshed_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
     if is_trading:
         st.caption(f"🟢 盤中排行每 10 秒自動更新｜最右側＝相較昨收漲跌幅｜本次更新：{refreshed_at}")
+    elif clock.status == "已收盤":
+        st.caption(f"🔵 今日收盤排行（盤後快取 5 分鐘）｜最右側＝今日收盤相較昨收漲跌幅｜檢查時間：{refreshed_at}")
     else:
         st.caption(f"⚪ 目前{clock.status}，顯示最近官方盤後排行｜最右側＝相較前一交易日收盤價｜檢查時間：{refreshed_at}")
     industries = sorted({stock.industry or "其他業" for stock in provider.search_stocks()})
