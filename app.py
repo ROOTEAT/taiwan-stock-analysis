@@ -289,6 +289,25 @@ def auth_cookie_manager() -> stx.CookieManager:
     return _AUTH_COOKIE_MANAGER
 
 
+def render_page_header(caption: str) -> None:
+    title_col, changelog_col = st.columns([5, 1.35], vertical_alignment="top")
+    with title_col:
+        st.title("台股智慧分析室")
+        st.caption(caption)
+    with changelog_col:
+        with st.popover("📝 更新日誌", use_container_width=True):
+            st.markdown("### 更新日誌")
+            st.caption(f"目前版本：{CURRENT_VERSION}")
+            for index, release in enumerate(CHANGELOG):
+                with st.expander(
+                    f"{release.version}｜{release.title}",
+                    expanded=index == 0,
+                ):
+                    for change in release.changes:
+                        st.markdown(f"- {change}")
+        st.caption(CURRENT_VERSION)
+
+
 def save_auth_cookie(user: dict[str, str], *, force: bool = False) -> None:
     secret = get_auth_cookie_secret()
     if not secret:
@@ -345,8 +364,7 @@ def render_cloud_login() -> None:
     client = get_cloud_client()
     if client is None or st.session_state.get("cloud_user"):
         return
-    st.title("台股智慧分析室")
-    st.caption("登入後即可永久保存自己的持股與關注清單")
+    render_page_header("登入後即可永久保存自己的持股與關注清單")
     login_tab, register_tab = st.tabs(["登入", "建立帳號"])
     with login_tab:
         with st.form("cloud-login"):
@@ -1330,22 +1348,7 @@ if public_demo_mode():
     render_cloud_login()
 
 provider = get_provider()
-title_col, changelog_col = st.columns([5, 1.35], vertical_alignment="top")
-with title_col:
-    st.title("台股智慧分析室")
-    st.caption("上市＋上櫃股票與 ETF｜最新行情輔助 × 多構面風險評分｜不構成投資建議")
-with changelog_col:
-    with st.popover("📝 更新日誌", use_container_width=True):
-        st.markdown("### 更新日誌")
-        st.caption(f"目前版本：{CURRENT_VERSION}")
-        for index, release in enumerate(CHANGELOG):
-            with st.expander(
-                f"{release.version}｜{release.title}",
-                expanded=index == 0,
-            ):
-                for change in release.changes:
-                    st.markdown(f"- {change}")
-    st.caption(CURRENT_VERSION)
+render_page_header("上市＋上櫃股票與 ETF｜最新行情輔助 × 多構面風險評分｜不構成投資建議")
 if beginner_mode():
     render_beginner_guide()
 render_market_clocks()
