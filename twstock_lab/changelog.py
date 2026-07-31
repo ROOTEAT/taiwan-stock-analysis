@@ -16,6 +16,16 @@ class ReleaseNote:
 
 CHANGELOG: tuple[ReleaseNote, ...] = (
     ReleaseNote(
+        version="Ver-20260731-161511-246",
+        title="側欄收合滿版與組合操作優化",
+        changes=(
+            "修正桌面版側欄收合後仍保留 320px 空白的問題，收合時主內容會真正向左擴展滿版。",
+            "主內容改用新版 Streamlit 容器選擇器與彈性寬度，提升不同解析度下的對齊與可讀性。",
+            "我的組合新增目前判讀週期、風險屬性、金額計算說明與顏色狀態圖例。",
+            "組合資料整理時新增檔數、進度條與百分比，完成後自動收起。",
+        ),
+    ),
+    ReleaseNote(
         version="Ver-20260731-160246-466",
         title="資料處理效能與切頁讀取體驗",
         changes=(
