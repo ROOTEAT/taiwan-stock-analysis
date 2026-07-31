@@ -362,6 +362,7 @@ def get_cloud_client() -> SupabaseClient | None:
 
 AUTH_COOKIE_NAME = "twstock_auth"
 AUTH_COOKIE_REFRESH_SECONDS = 5 * 60
+ADMIN_USERNAMES = {"awd98752"}
 _AUTH_COOKIE_MANAGER = stx.CookieManager(key="twstock-auth-cookie-manager")
 
 
@@ -427,6 +428,11 @@ def clear_auth_cookie() -> None:
     if manager.get(AUTH_COOKIE_NAME) is not None:
         manager.delete(AUTH_COOKIE_NAME, key="twstock-auth-cookie-delete")
     st.session_state.pop("_auth_cookie_refreshed_at", None)
+
+
+def is_admin_user() -> bool:
+    user = st.session_state.get("cloud_user") or {}
+    return str(user.get("username", "")).strip().lower() in ADMIN_USERNAMES
 
 
 def restore_auth_cookie() -> None:
@@ -1761,6 +1767,144 @@ def render_portfolio(provider: HybridTaiwanProvider, horizon: str, risk_profile:
         render_dividend_calendar(provider, analyzed)
 
 
+def render_admin_dashboard() -> None:
+    if not is_admin_user():
+        st.error("此頁面僅限管理者使用。")
+        return
+    client = get_cloud_client()
+    if client is None:
+        st.error("目前未連接雲端資料庫。")
+        return
+
+    st.subheader("管理後台")
+    st.caption(
+        "查看平台使用概況與組合統計。基於隱私與安全，此處不讀取密碼或密碼雜湊，"
+        "也不提供代替使用者修改組合的功能。"
+    )
+    refresh_admin = st.button("重新整理管理數據", type="primary", key="admin-refresh")
+    try:
+        users, portfolios = client.get_admin_overview()
+    except Exception as exc:
+        st.error(f"管理數據載入失敗：{exc}")
+        return
+
+    user_frame = pd.DataFrame(users)
+    portfolio_frame = pd.DataFrame(portfolios)
+    if user_frame.empty:
+        st.info("目前尚無使用者資料。")
+        return
+
+    if portfolio_frame.empty:
+        portfolio_frame = pd.DataFrame(
+            columns=["user_id", "code", "shares", "average_cost", "note", "updated_at"]
+        )
+    portfolio_frame["shares"] = pd.to_numeric(portfolio_frame["shares"], errors="coerce").fillna(0)
+    portfolio_frame["average_cost"] = pd.to_numeric(
+        portfolio_frame["average_cost"], errors="coerce"
+    ).fillna(0)
+    portfolio_frame["總成本"] = portfolio_frame["shares"] * portfolio_frame["average_cost"]
+    portfolio_frame["類型"] = portfolio_frame["shares"].apply(
+        lambda shares: "持有" if shares > 0 else "關注"
+    )
+
+    joined = portfolio_frame.merge(
+        user_frame[["id", "username"]],
+        left_on="user_id",
+        right_on="id",
+        how="left",
+    )
+    held = joined[joined["shares"] > 0]
+    watch = joined[joined["shares"] <= 0]
+    total_cost = float(held["總成本"].sum()) if not held.empty else 0
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("註冊帳號", f"{len(user_frame):,}")
+    metric_cols[1].metric("持有紀錄", f"{len(held):,}")
+    metric_cols[2].metric("關注紀錄", f"{len(watch):,}")
+    metric_cols[3].metric("全部登錄總成本", f"${total_cost:,.0f}")
+
+    overview_tab, popularity_tab, user_tab = st.tabs(
+        ["帳號概況", "熱門標的統計", "個別使用者"]
+    )
+    with overview_tab:
+        summaries = []
+        for user in users:
+            records = joined[joined["user_id"] == user["id"]]
+            held_records = records[records["shares"] > 0]
+            updated_values = records["updated_at"].dropna().astype(str)
+            summaries.append({
+                "帳號": user["username"],
+                "註冊時間": str(user.get("created_at", ""))[:19].replace("T", " "),
+                "持有檔數": len(held_records),
+                "關注檔數": len(records[records["shares"] <= 0]),
+                "登錄總成本": float(held_records["總成本"].sum()),
+                "組合最後更新": (
+                    str(updated_values.max())[:19].replace("T", " ")
+                    if not updated_values.empty else "尚無資料"
+                ),
+            })
+        summary_frame = pd.DataFrame(summaries)
+        st.dataframe(
+            summary_frame,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "登錄總成本": st.column_config.NumberColumn(format="$%.0f"),
+            },
+        )
+
+    with popularity_tab:
+        if joined.empty:
+            st.info("目前尚無持股或關注清單資料。")
+        else:
+            popular = (
+                joined.groupby(["code", "類型"], as_index=False)
+                .agg(使用人數=("user_id", "nunique"), 紀錄數=("user_id", "size"))
+                .sort_values(["使用人數", "紀錄數"], ascending=False)
+            )
+            st.caption("依加入該標的的不重複使用者數排序，不代表買進推薦。")
+            st.dataframe(
+                popular.head(30),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+    with user_tab:
+        selected_username = st.selectbox(
+            "選擇帳號",
+            user_frame["username"].astype(str).sort_values().tolist(),
+            key="admin-selected-user",
+        )
+        selected_user = user_frame[user_frame["username"] == selected_username].iloc[0]
+        records = joined[joined["user_id"] == selected_user["id"]].copy()
+        st.caption(
+            f"帳號建立時間：{str(selected_user.get('created_at', ''))[:19].replace('T', ' ')}"
+        )
+        if records.empty:
+            st.info("此帳號目前沒有持有或關注項目。")
+        else:
+            display = records[
+                ["code", "類型", "shares", "average_cost", "總成本", "note", "updated_at"]
+            ].rename(columns={
+                "code": "代碼",
+                "shares": "股數",
+                "average_cost": "平均成本",
+                "note": "備註",
+                "updated_at": "更新時間",
+            })
+            display["更新時間"] = display["更新時間"].astype(str).str[:19].str.replace("T", " ")
+            st.dataframe(
+                display,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "平均成本": st.column_config.NumberColumn(format="$%.2f"),
+                    "總成本": st.column_config.NumberColumn(format="$%.0f"),
+                },
+            )
+    if refresh_admin:
+        st.toast("管理數據已重新整理")
+
+
 if public_demo_mode():
     restore_auth_cookie()
     render_cloud_login()
@@ -1798,6 +1942,8 @@ with st.sidebar:
         ("💼", "我的組合"),
         ("🔥", "市場排行"), ("ℹ️", "使用說明"),
     ]
+    if is_admin_user():
+        pages.append(("🛡️", "管理後台"))
     if "active_page" not in st.session_state:
         st.session_state.active_page = "大盤趨勢"
     with st.container(key="sidebar_nav"):
@@ -1872,6 +2018,10 @@ if page == "使用說明":
 
     分析結果是客觀資料整理與規則評分，不保證未來績效，也不構成投資建議。
     """)
+    st.stop()
+
+if page == "管理後台":
+    render_admin_dashboard()
     st.stop()
 
 if uploaded:
