@@ -16,6 +16,15 @@ class ReleaseNote:
 
 CHANGELOG: tuple[ReleaseNote, ...] = (
     ReleaseNote(
+        version="Ver-20260731-142817-768",
+        title="市場排行盤中更新",
+        changes=(
+            "成交量、漲幅與跌幅排行在台股交易中每 10 秒更新。",
+            "排行更新採獨立區塊執行，不會重跑或中斷目前頁面操作。",
+            "介面新增排行更新時間與盤前、盤後狀態提示。",
+        ),
+    ),
+    ReleaseNote(
         version="Ver-20260731-141045-844",
         title="作者簽名彩蛋",
         changes=(
