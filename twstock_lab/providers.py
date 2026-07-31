@@ -389,12 +389,39 @@ class HybridTaiwanProvider:
             if live_codes:
                 rows = [item for item in rows if item["code"] in live_codes]
             else:
-                # Hosted environments may reject large MIS batches. Correct the
-                # visible candidates with the per-symbol latest quote endpoint.
+                # Retry visible candidates in one compact MIS request.
                 volume_candidates = sorted(rows, key=lambda x: x["volume"], reverse=True)[:10]
                 gain_candidates = sorted(rows, key=lambda x: x["change_pct"], reverse=True)[:10]
                 loss_candidates = sorted(rows, key=lambda x: x["change_pct"])[:10]
                 fallback_items = {item["code"]: item for item in (*volume_candidates, *gain_candidates, *loss_candidates)}
+                channels = "|".join(
+                    f"{'tse' if item['market'] == 'TWSE' else 'otc'}_{item['code']}.tw"
+                    for item in fallback_items.values()
+                )
+                compact_quotes = []
+                try:
+                    compact_quotes = self._json(f"{TWSE_MIS}?ex_ch={channels}&json=1&delay=0").get("msgArray", [])
+                except Exception:
+                    pass
+                corrected: list[dict] = []
+                for quote in compact_quotes:
+                    item = fallback_items.get(str(quote.get("c", "")).strip())
+                    price = _number(quote.get("z"))
+                    previous = _number(quote.get("y"))
+                    if item is None or price <= 0 or previous <= 0:
+                        continue
+                    item["price"] = price
+                    item["change_pct"] = (price / previous - 1) * 100
+                    item["volume"] = _number(quote.get("v")) * 1000
+                    try:
+                        item["market_time"] = datetime.strptime(
+                            f"{quote.get('d')} {quote.get('t')}", "%Y%m%d %H:%M:%S"
+                        ).replace(tzinfo=TAIPEI)
+                    except (TypeError, ValueError):
+                        item["market_time"] = datetime.now(TAIPEI)
+                    item["source"] = "TWSE MIS 盤中行情"
+                    corrected.append(item)
+
                 now = datetime.now(TAIPEI)
                 market_open = (now.weekday() < 5 and now.hour >= 9 and (now.hour < 13 or (now.hour == 13 and now.minute < 30)))
 
@@ -406,20 +433,20 @@ class HybridTaiwanProvider:
                     )
                     return item, self.get_latest_quote(stock, refresh=market_open)
 
-                corrected: list[dict] = []
-                with ThreadPoolExecutor(max_workers=8) as executor:
-                    futures = [executor.submit(fetch_fallback, item) for item in fallback_items.values()]
-                    for future in as_completed(futures):
-                        try:
-                            item, quote = future.result()
-                        except Exception:
-                            continue
-                        item["price"] = quote.price
-                        item["change_pct"] = quote.change_pct
-                        item["volume"] = quote.volume
-                        item["market_time"] = quote.meta.market_time
-                        item["source"] = quote.meta.source
-                        corrected.append(item)
+                if not corrected:
+                    with ThreadPoolExecutor(max_workers=8) as executor:
+                        futures = [executor.submit(fetch_fallback, item) for item in fallback_items.values()]
+                        for future in as_completed(futures):
+                            try:
+                                item, quote = future.result()
+                            except Exception:
+                                continue
+                            item["price"] = quote.price
+                            item["change_pct"] = quote.change_pct
+                            item["volume"] = quote.volume
+                            item["market_time"] = quote.meta.market_time
+                            item["source"] = quote.meta.source
+                            corrected.append(item)
                 if corrected:
                     rows = corrected
         return {
