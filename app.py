@@ -1429,6 +1429,61 @@ def render_industry_heat(provider: HybridTaiwanProvider) -> None:
         )
         st.plotly_chart(bars, use_container_width=True, key="industry-heat-bars")
 
+    st.markdown("#### 產業漲跌幅熱度圖")
+    st.caption(
+        "方塊面積代表成交活躍度；紅色為上漲、綠色為下跌，顏色越深代表平均漲跌幅越大。"
+        "黃色附近表示接近平盤。"
+    )
+    heatmap_data = industry.copy()
+    heatmap_data["顯示權重"] = heatmap_data["成交量"].clip(lower=1).pow(.5)
+    color_limit = max(1.0, min(10.0, float(heatmap_data["平均漲跌幅"].abs().quantile(.95))))
+    treemap = go.Figure(go.Treemap(
+        labels=heatmap_data["industry"],
+        parents=[""] * len(heatmap_data),
+        values=heatmap_data["顯示權重"],
+        branchvalues="total",
+        texttemplate="<b>%{label}</b><br>%{color:+.2f}%",
+        marker={
+            "colors": heatmap_data["平均漲跌幅"],
+            "cmin": -color_limit,
+            "cmid": 0,
+            "cmax": color_limit,
+            "colorscale": [
+                [0.00, "#15803d"],
+                [0.35, "#4ade80"],
+                [0.50, "#facc15"],
+                [0.65, "#fb7185"],
+                [1.00, "#dc2626"],
+            ],
+            "line": {"color": "rgba(15,23,42,.9)", "width": 2},
+            "colorbar": {
+                "title": "平均漲跌幅 %",
+                "tickformat": "+.1f",
+                "thickness": 14,
+            },
+        },
+        customdata=heatmap_data[["上漲比例", "股票數", "熱度分數", "成交量"]],
+        hovertemplate=(
+            "<b>%{label}</b><br>平均漲跌 %{color:+.2f}%"
+            "<br>上漲家數比例 %{customdata[0]:.0%}"
+            "<br>樣本股票 %{customdata[1]:.0f} 檔"
+            "<br>熱度分數 %{customdata[2]:.0f}"
+            "<br>成交量 %{customdata[3]:,.0f}<extra></extra>"
+        ),
+    ))
+    treemap.update_layout(
+        height=520,
+        margin={"l": 8, "r": 8, "t": 8, "b": 8},
+        paper_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#f8fafc", "size": 14},
+    )
+    st.plotly_chart(
+        treemap,
+        use_container_width=True,
+        key="industry-change-treemap",
+    )
+    loading.progress(92, text="正在整理產業強弱摘要… 92%")
+
     strong = industry.sort_values("熱度分數", ascending=False).head(5)
     weak = industry.sort_values("熱度分數").head(5)
     status_counts = industry["狀態"].value_counts()
