@@ -16,6 +16,16 @@ class ReleaseNote:
 
 CHANGELOG: tuple[ReleaseNote, ...] = (
     ReleaseNote(
+        version="Ver-20260731-154254-346",
+        title="管理者數據後台",
+        changes=(
+            "將 awd98752 設為管理者帳號，登入後左側會出現專屬「管理後台」。",
+            "新增帳號數、持有與關注紀錄、登錄總成本及熱門標的統計。",
+            "可依帳號查看組合明細與更新時間，但不提供代替使用者修改資料的功能。",
+            "管理查詢不會讀取或顯示任何密碼與密碼雜湊。",
+        ),
+    ),
+    ReleaseNote(
         version="Ver-20260731-153807-798",
         title="趨勢排行、產業熱度與響應式版面",
         changes=(
@@ -117,4 +127,3 @@ CHANGELOG: tuple[ReleaseNote, ...] = (
 )
 
 CURRENT_VERSION = CHANGELOG[0].version
-
