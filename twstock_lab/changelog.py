@@ -16,6 +16,16 @@ class ReleaseNote:
 
 CHANGELOG: tuple[ReleaseNote, ...] = (
     ReleaseNote(
+        version="Ver-20260731-153807-798",
+        title="趨勢排行、產業熱度與響應式版面",
+        changes=(
+            "左側新增「趨勢排行」，依看漲、盤整、看跌分類，並用技術方向強度與資料信心度排序。",
+            "大盤趨勢新增產業熱度圓餅圖、排行圖與強勢／觀察／弱勢提示，協助快速掌握市場輪動。",
+            "縮小新手輔助術語開關與文字，並解除主內容固定寬度，側欄收合後自動擴展使用可用空間。",
+            "趨勢排行支援週期、產業與候選數篩選，並可直接前往個股智慧分析。",
+        ),
+    ),
+    ReleaseNote(
         version="Ver-20260731-150316-521",
         title="排行舊快取強制失效",
         changes=(
@@ -107,3 +117,4 @@ CHANGELOG: tuple[ReleaseNote, ...] = (
 )
 
 CURRENT_VERSION = CHANGELOG[0].version
+
