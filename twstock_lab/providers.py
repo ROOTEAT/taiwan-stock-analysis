@@ -360,7 +360,13 @@ class HybridTaiwanProvider:
                         continue
                     live_quotes.extend(payload.get("msgArray", []))
                 if live_quotes:
-                    self.cache.set("hot:mis:full-market", live_quotes, 10)
+                    now = datetime.now(TAIPEI)
+                    market_open = (
+                        now.weekday() < 5
+                        and now.hour >= 9
+                        and (now.hour < 13 or (now.hour == 13 and now.minute < 30))
+                    )
+                    self.cache.set("hot:mis:full-market", live_quotes, 10 if market_open else 300)
             for quote in live_quotes:
                 code = str(quote.get("c", "")).strip()
                 item = candidates.get(code)
