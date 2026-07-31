@@ -337,8 +337,9 @@ class HybridTaiwanProvider:
                              "volume": _number(r.get("TradeVolume") or r.get("TradingShares")),
                              "market_time": market_time, "source": f"{market} 官方盤後行情"})
         if refresh and rows:
-            # OpenAPI may still contain the previous close during market hours.
-            # Build rankings from the complete TWSE/TPEx MIS snapshot.
+            # The official OpenAPI list may still contain the previous close during
+            # market hours. Build the ranking from the complete exchange MIS
+            # snapshot instead of merely correcting yesterday's candidates.
             candidates = {item["code"]: item for item in rows}
             live_codes: set[str] = set()
             candidate_items = list(candidates.values())
@@ -347,8 +348,8 @@ class HybridTaiwanProvider:
                 live_quotes = cached_snapshot[0]
             else:
                 live_quotes = []
-                # MIS returns an empty batch when the query becomes too long;
-                # 120 channels stays below that limit for six-digit ETFs.
+                # MIS returns an empty batch when the query string becomes too
+                # long; 120 channels stays below that limit for six-digit ETFs.
                 for start in range(0, len(candidate_items), 120):
                     batch = candidate_items[start:start + 120]
                     channels = "|".join(
@@ -356,7 +357,9 @@ class HybridTaiwanProvider:
                         for item in batch
                     )
                     try:
-                        payload = self._json(f"{TWSE_MIS}?ex_ch={channels}&json=1&delay=0")
+                        payload = self._json(
+                            f"{TWSE_MIS}?ex_ch={channels}&json=1&delay=0"
+                        )
                     except Exception:
                         continue
                     live_quotes.extend(payload.get("msgArray", []))
@@ -364,7 +367,7 @@ class HybridTaiwanProvider:
                     now = datetime.now(TAIPEI)
                     market_open = (
                         now.weekday() < 5
-                        and now.hour >= 9
+                        and (now.hour > 9 or (now.hour == 9 and now.minute >= 0))
                         and (now.hour < 13 or (now.hour == 13 and now.minute < 30))
                     )
                     self.cache.set("hot:mis:full-market:v3", live_quotes, 10 if market_open else 300)
@@ -389,18 +392,24 @@ class HybridTaiwanProvider:
             if live_codes:
                 rows = [item for item in rows if item["code"] in live_codes]
             else:
-                # Retry visible candidates in one compact MIS request.
+                # Some hosted environments may reject large MIS URLs. Retry only
+                # the visible candidates in one compact MIS request first.
                 volume_candidates = sorted(rows, key=lambda x: x["volume"], reverse=True)[:10]
                 gain_candidates = sorted(rows, key=lambda x: x["change_pct"], reverse=True)[:10]
                 loss_candidates = sorted(rows, key=lambda x: x["change_pct"])[:10]
-                fallback_items = {item["code"]: item for item in (*volume_candidates, *gain_candidates, *loss_candidates)}
+                fallback_items = {
+                    item["code"]: item
+                    for item in (*volume_candidates, *gain_candidates, *loss_candidates)
+                }
                 channels = "|".join(
                     f"{'tse' if item['market'] == 'TWSE' else 'otc'}_{item['code']}.tw"
                     for item in fallback_items.values()
                 )
                 compact_quotes = []
                 try:
-                    compact_quotes = self._json(f"{TWSE_MIS}?ex_ch={channels}&json=1&delay=0").get("msgArray", [])
+                    compact_quotes = self._json(
+                        f"{TWSE_MIS}?ex_ch={channels}&json=1&delay=0"
+                    ).get("msgArray", [])
                 except Exception:
                     pass
                 corrected: list[dict] = []
@@ -422,8 +431,14 @@ class HybridTaiwanProvider:
                     item["source"] = "TWSE MIS 盤中行情"
                     corrected.append(item)
 
+                # If even the compact MIS request fails, use the per-symbol Yahoo
+                # endpoint rather than presenting the previous close as today.
                 now = datetime.now(TAIPEI)
-                market_open = (now.weekday() < 5 and now.hour >= 9 and (now.hour < 13 or (now.hour == 13 and now.minute < 30)))
+                market_open = (
+                    now.weekday() < 5
+                    and now.hour >= 9
+                    and (now.hour < 13 or (now.hour == 13 and now.minute < 30))
+                )
 
                 def fetch_fallback(item):
                     stock = StockInfo(
@@ -450,6 +465,7 @@ class HybridTaiwanProvider:
                 if corrected:
                     rows = corrected
         return {
+            "all": rows,
             "volume": sorted(rows, key=lambda x: x["volume"], reverse=True)[:50],
             "gainers": sorted(rows, key=lambda x: x["change_pct"], reverse=True)[:50],
             "losers": sorted(rows, key=lambda x: x["change_pct"])[:50],
@@ -531,3 +547,4 @@ class HybridTaiwanProvider:
             key=lambda event: event.ex_dividend_date or datetime.max.replace(tzinfo=TAIPEI),
             reverse=True,
         )
+
