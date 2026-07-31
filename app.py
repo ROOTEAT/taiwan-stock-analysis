@@ -219,6 +219,30 @@ h3 {font-size:clamp(1.15rem, 1.8vw, 1.5rem) !important;}
 .industry-summary-card.strong {background:rgba(239,68,68,.13); border-color:rgba(248,113,113,.42);}
 .industry-summary-card.neutral {background:rgba(245,158,11,.12); border-color:rgba(250,204,21,.38);}
 .industry-summary-card.weak {background:rgba(34,197,94,.11); border-color:rgba(74,222,128,.35);}
+.page-loading-mask {
+  position:fixed;
+  inset:0;
+  z-index:999999;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:rgba(4,12,24,.76);
+  backdrop-filter:blur(9px);
+}
+.page-loading-panel {
+  width:min(430px,calc(100vw - 40px));
+  padding:26px 28px;
+  border-radius:20px;
+  color:#eaf4ff;
+  background:linear-gradient(145deg,rgba(30,41,59,.96),rgba(15,23,42,.96));
+  border:1px solid rgba(125,211,252,.35);
+  box-shadow:0 24px 80px rgba(0,0,0,.42);
+}
+.page-loading-title {font-size:1.18rem; font-weight:800; margin-bottom:8px;}
+.page-loading-copy {font-size:.9rem; color:#bfdbfe; margin-bottom:15px;}
+.page-loading-track {height:10px; overflow:hidden; border-radius:999px; background:rgba(148,163,184,.2);}
+.page-loading-fill {height:100%; border-radius:999px; background:linear-gradient(90deg,#38bdf8,#818cf8); transition:width .2s ease;}
+.page-loading-percent {margin-top:9px; text-align:right; font-variant-numeric:tabular-nums; font-weight:750;}
 .result-count {
   padding:.45rem .7rem; border-radius:10px;
   background:rgba(56,189,248,.08); border:1px solid rgba(125,211,252,.18);
@@ -337,6 +361,86 @@ def get_provider(cache_version: str) -> HybridTaiwanProvider:
     # never retain a provider instance created from older parsing logic.
     _ = cache_version
     return HybridTaiwanProvider()
+
+
+def analyze_stock_cached(
+    provider: HybridTaiwanProvider,
+    request: StockAnalysisRequest,
+    *,
+    refresh: bool = False,
+):
+    """Reuse identical analysis work briefly within the visitor's session."""
+    now = time.time()
+    market_status = market_clock("台股").status
+    ttl = 10 if market_status == "交易中" else 300
+    analysis_date = request.analysis_date.isoformat() if request.analysis_date else ""
+    key = (
+        request.stock_code,
+        request.horizon,
+        request.risk_profile,
+        analysis_date,
+        request.include_news,
+        CURRENT_VERSION,
+    )
+    cache = st.session_state.setdefault("_analysis_result_cache", {})
+    cached = cache.get(key)
+    if not refresh and cached and now - cached["stored_at"] <= ttl:
+        return cached["result"]
+    result = analyze_stock(provider, request, refresh=refresh)
+    cache[key] = {"stored_at": now, "result": result}
+    if len(cache) > 80:
+        oldest = sorted(cache, key=lambda item: cache[item]["stored_at"])[:-60]
+        for old_key in oldest:
+            cache.pop(old_key, None)
+    return result
+
+
+_PAGE_TRANSITION_PLACEHOLDER = None
+
+
+def update_page_transition(percent: int, message: str) -> None:
+    global _PAGE_TRANSITION_PLACEHOLDER
+    if not st.session_state.get("_page_transition_active"):
+        return
+    if _PAGE_TRANSITION_PLACEHOLDER is None:
+        _PAGE_TRANSITION_PLACEHOLDER = st.empty()
+    safe_percent = max(0, min(100, int(percent)))
+    _PAGE_TRANSITION_PLACEHOLDER.markdown(
+        f"""
+        <div class="page-loading-mask">
+          <div class="page-loading-panel">
+            <div class="page-loading-title">正在切換頁面</div>
+            <div class="page-loading-copy">{message}</div>
+            <div class="page-loading-track">
+              <div class="page-loading-fill" style="width:{safe_percent}%"></div>
+            </div>
+            <div class="page-loading-percent">{safe_percent}%</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def begin_pending_page_transition() -> None:
+    target = st.session_state.pop("_page_transition_target", None)
+    if not target:
+        return
+    st.session_state.active_page = target
+    st.session_state["_page_transition_active"] = True
+    update_page_transition(12, f"正在準備「{target}」…")
+
+
+def finish_page_transition() -> None:
+    global _PAGE_TRANSITION_PLACEHOLDER
+    if not st.session_state.get("_page_transition_active"):
+        return
+    update_page_transition(100, "資料與畫面已準備完成")
+    time.sleep(.08)
+    if _PAGE_TRANSITION_PLACEHOLDER is not None:
+        _PAGE_TRANSITION_PLACEHOLDER.empty()
+    _PAGE_TRANSITION_PLACEHOLDER = None
+    st.session_state.pop("_page_transition_active", None)
 
 
 def public_demo_mode() -> bool:
@@ -1129,7 +1233,7 @@ def _render_hot_list_content(provider: HybridTaiwanProvider, clock) -> None:
                 )
                 if st.button("查看分析", key=f"hot-{key}-{item['code']}", use_container_width=True):
                     st.session_state.pending_stock = item["code"]
-                    st.session_state.active_page = "智慧分析"
+                    st.session_state["_page_transition_target"] = "智慧分析"
                     st.rerun()
 
 
@@ -1386,7 +1490,7 @@ def render_trend_rankings(
         scanned = []
         for index, code in enumerate(candidates):
             try:
-                result = analyze_stock(
+                result = analyze_stock_cached(
                     provider,
                     StockAnalysisRequest(code, trend_horizon, risk_profile),
                 )
@@ -1472,7 +1576,7 @@ def render_trend_rankings(
                         use_container_width=True,
                     ):
                         st.session_state.pending_stock = result.stock.code
-                        st.session_state.active_page = "智慧分析"
+                        st.session_state["_page_transition_target"] = "智慧分析"
                         st.rerun()
     st.info(
         "「看漲」表示目前技術條件相對偏多；「看跌」表示風險或弱勢訊號較多。"
@@ -1545,7 +1649,7 @@ def render_opportunity_scan(provider: HybridTaiwanProvider, horizon: str, risk_p
         results = []
         for index, code in enumerate(candidates):
             try:
-                results.append(analyze_stock(
+                results.append(analyze_stock_cached(
                     provider, StockAnalysisRequest(code, horizon, risk_profile)
                 ))
             except Exception:
@@ -1700,7 +1804,9 @@ def render_portfolio(provider: HybridTaiwanProvider, horizon: str, risk_profile:
     analyzed = []
     for item in items:
         try:
-            result = analyze_stock(provider, StockAnalysisRequest(item.code, horizon, risk_profile))
+            result = analyze_stock_cached(
+                provider, StockAnalysisRequest(item.code, horizon, risk_profile)
+            )
             action, reason = holding_action(result, item.average_cost)
             css_class, level = advice_level(action)
             analyzed.append((item, result, action, reason, css_class, level))
@@ -1795,7 +1901,7 @@ def render_portfolio(provider: HybridTaiwanProvider, horizon: str, risk_profile:
                             use_container_width=True,
                         ):
                             st.session_state.pending_stock = item.code
-                            st.session_state.active_page = "智慧分析"
+                            st.session_state["_page_transition_target"] = "智慧分析"
                             st.session_state.return_to_portfolio = True
                             st.rerun()
                         c1, c2 = st.columns(2)
@@ -1991,6 +2097,8 @@ if public_demo_mode():
     restore_auth_cookie()
     render_cloud_login()
 
+begin_pending_page_transition()
+update_page_transition(24, "正在載入共用行情與介面…")
 provider = get_provider(CURRENT_VERSION)
 render_page_header("上市＋上櫃股票與 ETF｜最新行情輔助 × 多構面風險評分｜不構成投資建議")
 if beginner_mode():
@@ -2034,7 +2142,7 @@ with st.sidebar:
                 f"{icon}　{label}", key=f"nav-{label}",
                 type="primary" if st.session_state.active_page == label else "secondary",
             ):
-                st.session_state.active_page = label
+                st.session_state["_page_transition_target"] = label
                 if label != "智慧分析":
                     st.session_state.pop("return_to_portfolio", None)
                 st.rerun()
@@ -2056,25 +2164,31 @@ with st.sidebar:
         uploaded = st.file_uploader("日線 CSV", type="csv", help="date, open, high, low, close, volume")
     st.caption("Yahoo 僅補最新行情；分析資料會顯示實際來源與時間。")
 
+update_page_transition(48, f"正在讀取「{page}」所需資料…")
 if page == "大盤趨勢":
     render_market_overview(provider)
+    finish_page_transition()
     st.stop()
 
 if page == "近期關注":
     render_opportunity_scan(provider, horizon, risk_profile)
+    finish_page_transition()
     st.stop()
 
 if page == "趨勢排行":
     render_trend_rankings(provider, horizon, risk_profile)
+    finish_page_transition()
     st.stop()
 
 if page == "我的組合":
     render_portfolio(provider, horizon, risk_profile)
+    finish_page_transition()
     st.stop()
 
 if page == "市場排行":
     render_hot_list(provider)
     st.info("點選任一標的後，左側切回「智慧分析」即可查看短線、中線或長線建議。")
+    finish_page_transition()
     st.stop()
 
 if page == "使用說明":
@@ -2100,10 +2214,12 @@ if page == "使用說明":
 
     分析結果是客觀資料整理與規則評分，不保證未來績效，也不構成投資建議。
     """)
+    finish_page_transition()
     st.stop()
 
 if page == "管理後台":
     render_admin_dashboard()
+    finish_page_transition()
     st.stop()
 
 if uploaded:
@@ -2113,6 +2229,7 @@ if uploaded:
         render_price_chart(manual)
     except Exception as exc:
         st.error(f"CSV 格式錯誤：{exc}")
+    finish_page_transition()
     st.stop()
 
 try:
@@ -2134,11 +2251,13 @@ elif matches:
 if not selected_code:
     st.info("請輸入四位數股票代碼，或以公司名稱搜尋後選擇股票。")
     render_hot_list(provider)
+    finish_page_transition()
     st.stop()
 
+update_page_transition(68, f"正在分析 {selected_code} 並整理指標…")
 try:
     with st.spinner("正在取得市場資料並計算適合度…"):
-        result = analyze_stock(
+        result = analyze_stock_cached(
             provider,
             StockAnalysisRequest(
                 stock_code=selected_code, horizon=horizon, risk_profile=risk_profile,
@@ -2149,15 +2268,17 @@ try:
 except Exception as exc:
     st.error(f"無法完成分析：{exc}")
     render_hot_list(provider)
+    finish_page_transition()
     st.stop()
 
+finish_page_transition()
 quote = result.quote
 market_time = quote.meta.market_time.astimezone().strftime("%Y-%m-%d %H:%M") if quote.meta.market_time else "未提供"
 asset_type = getattr(result.stock, "asset_type", "ETF" if result.stock.code.startswith("00") else "STOCK")
 asset_label = "ETF" if asset_type == "ETF" else "股票"
 if st.session_state.get("return_to_portfolio"):
     if st.button("← 返回我的組合", key="back-to-portfolio", use_container_width=False):
-        st.session_state.active_page = "我的組合"
+        st.session_state["_page_transition_target"] = "我的組合"
         st.session_state.pop("return_to_portfolio", None)
         st.rerun()
 industry_label = result.stock.industry or ("ETF" if asset_type == "ETF" else "其他業")
