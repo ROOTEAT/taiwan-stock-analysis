@@ -16,6 +16,14 @@ class ReleaseNote:
 
 CHANGELOG: tuple[ReleaseNote, ...] = (
     ReleaseNote(
+        version="Ver-20260731-143004-991",
+        title="密碼安全提醒",
+        changes=(
+            "登入與註冊頁新增醒目的密碼安全提醒。",
+            "提醒使用者為本站另設至少 8 個字元、好記且不重複使用的密碼。",
+        ),
+    ),
+    ReleaseNote(
         version="Ver-20260731-142817-768",
         title="市場排行盤中更新",
         changes=(
