@@ -3,8 +3,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import os
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,6 +17,7 @@ from .portfolio import PortfolioItem
 
 
 USERNAME_RE = re.compile(r"^[a-z0-9_.-]{3,32}$")
+AUTH_SESSION_SECONDS = 24 * 60 * 60
 
 
 def normalize_username(username: str) -> str:
@@ -58,6 +61,63 @@ def verify_password(password: str, encoded: str) -> bool:
         return hmac.compare_digest(actual, expected)
     except (ValueError, TypeError):
         return False
+
+
+def sign_session_token(
+    user_id: str,
+    username: str,
+    secret: str,
+    *,
+    now: int | None = None,
+) -> str:
+    if len(secret) < 32:
+        raise ValueError("Cookie 加密金鑰至少需要 32 個字元")
+    payload = {
+        "uid": str(uuid.UUID(user_id)),
+        "usr": validate_username(username),
+        "active": int(time.time() if now is None else now),
+    }
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).rstrip(b"=")
+    signature = hmac.new(secret.encode("utf-8"), encoded, hashlib.sha256).digest()
+    return (
+        encoded.decode("ascii")
+        + "."
+        + base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+    )
+
+
+def verify_session_token(
+    token: str,
+    secret: str,
+    *,
+    now: int | None = None,
+    max_idle_seconds: int = AUTH_SESSION_SECONDS,
+) -> dict[str, str | int] | None:
+    try:
+        payload_text, signature_text = token.split(".", 1)
+        payload_bytes = payload_text.encode("ascii")
+        supplied = base64.urlsafe_b64decode(
+            signature_text + "=" * (-len(signature_text) % 4)
+        )
+        expected = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).digest()
+        if not hmac.compare_digest(supplied, expected):
+            return None
+        payload = json.loads(
+            base64.urlsafe_b64decode(payload_text + "=" * (-len(payload_text) % 4))
+        )
+        current = int(time.time() if now is None else now)
+        active = int(payload["active"])
+        if active > current + 300 or current - active > max_idle_seconds:
+            return None
+        return {
+            "id": str(uuid.UUID(payload["uid"])),
+            "username": validate_username(payload["usr"]),
+            "active": active,
+        }
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -136,6 +196,21 @@ class SupabaseClient:
             },
         )
         if not rows or not verify_password(password, rows[0]["password_hash"]):
+            return None
+        return CloudUser(rows[0]["id"], rows[0]["username"])
+
+    def get_user(self, user_id: str, username: str) -> CloudUser | None:
+        rows = self._request(
+            "GET",
+            "app_users",
+            params={
+                "select": "id,username",
+                "id": f"eq.{user_id}",
+                "username": f"eq.{normalize_username(username)}",
+                "limit": "1",
+            },
+        )
+        if not rows:
             return None
         return CloudUser(rows[0]["id"], rows[0]["username"])
 
