@@ -16,6 +16,16 @@ class ReleaseNote:
 
 CHANGELOG: tuple[ReleaseNote, ...] = (
     ReleaseNote(
+        version="Ver-20260815-194819-646",
+        title="雲端資料庫中斷容錯",
+        changes=(
+            "登入與註冊遇到 Supabase DNS、暫停或逾時時，改顯示清楚的中文處理提示。",
+            "雲端暫時中斷時保留有效登入 Cookie，資料庫恢復後可自動嘗試還原登入。",
+            "新增臨時訪客模式，雲端維護期間仍可使用行情、排行與智慧分析。",
+            "訪客模式資料只保留於目前工作階段，並可由左側按鈕返回登入。",
+        ),
+    ),
+    ReleaseNote(
         version="Ver-20260731-162126-221",
         title="產業漲跌幅熱度圖",
         changes=(
