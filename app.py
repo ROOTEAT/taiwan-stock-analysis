@@ -586,6 +586,21 @@ def is_admin_user() -> bool:
     return str(user.get("username", "")).strip().lower() in ADMIN_USERNAMES
 
 
+def friendly_cloud_error(exc: Exception) -> str:
+    text = str(exc).lower()
+    if any(token in text for token in (
+        "nameresolutionerror", "failed to resolve", "name or service not known",
+        "non-existent domain", "無法識別這台主機",
+    )):
+        return (
+            "雲端資料庫目前無法連線，可能是 Supabase 免費專案已暫停，"
+            "或專案網址已失效。請由專案擁有者到 Supabase Dashboard 恢復專案後再試。"
+        )
+    if "timeout" in text or "timed out" in text:
+        return "雲端資料庫回應逾時，請稍候一分鐘再試。"
+    return "雲端資料庫目前無法使用，請稍候再試或通知網站管理者。"
+
+
 def restore_auth_cookie() -> None:
     client = get_cloud_client()
     secret = get_auth_cookie_secret()
@@ -602,23 +617,37 @@ def restore_auth_cookie() -> None:
     if restored is None:
         clear_auth_cookie()
         return
-    user = client.get_user(str(restored["id"]), str(restored["username"]))
+    try:
+        user = client.get_user(str(restored["id"]), str(restored["username"]))
+    except Exception as exc:
+        # Keep the signed cookie during a temporary database outage so the
+        # visitor can be restored automatically after Supabase resumes.
+        st.session_state["_cloud_restore_error"] = friendly_cloud_error(exc)
+        return
     if user is None:
         clear_auth_cookie()
         return
     st.session_state.cloud_user = {"id": user.id, "username": user.username}
+    st.session_state.pop("_cloud_restore_error", None)
     save_auth_cookie(st.session_state.cloud_user, force=True)
 
 
 def render_cloud_login() -> None:
     client = get_cloud_client()
-    if client is None or st.session_state.get("cloud_user"):
+    if (
+        client is None
+        or st.session_state.get("cloud_user")
+        or st.session_state.get("guest_mode")
+    ):
         return
     render_page_header("登入後即可永久保存自己的持股與關注清單")
     st.warning(
         "🔐 密碼安全提醒：請不要輸入你平常用於 Email、銀行、社群或其他網站的重要密碼。"
         "為本站另外設定一組至少 8 個字元、自己好記的獨立密碼即可。"
     )
+    restore_error = st.session_state.get("_cloud_restore_error")
+    if restore_error:
+        st.error(restore_error)
     login_tab, register_tab = st.tabs(["登入", "建立帳號"])
     with login_tab:
         with st.form("cloud-login"):
@@ -632,10 +661,12 @@ def render_cloud_login() -> None:
                     st.error("帳號或密碼不正確")
                 else:
                     st.session_state.cloud_user = {"id": user.id, "username": user.username}
+                    st.session_state.pop("guest_mode", None)
+                    st.session_state.pop("_cloud_restore_error", None)
                     save_auth_cookie(st.session_state.cloud_user, force=True)
                     st.success("登入成功，正在載入你的專屬組合")
             except Exception as exc:
-                st.error(f"登入暫時失敗：{exc}")
+                st.error(friendly_cloud_error(exc))
     with register_tab:
         with st.form("cloud-register"):
             new_username = st.text_input(
@@ -651,11 +682,19 @@ def render_cloud_login() -> None:
                 try:
                     user = client.register(new_username, new_password)
                     st.session_state.cloud_user = {"id": user.id, "username": user.username}
+                    st.session_state.pop("guest_mode", None)
+                    st.session_state.pop("_cloud_restore_error", None)
                     save_auth_cookie(st.session_state.cloud_user, force=True)
                     st.success("帳號建立完成，正在載入你的專屬組合")
                 except Exception as exc:
-                    st.error(str(exc))
+                    message = str(exc) if isinstance(exc, ValueError) else friendly_cloud_error(exc)
+                    st.error(message)
     st.info("帳號資料經雜湊後保存；系統管理者也無法讀取你的原始密碼。")
+    st.divider()
+    st.caption("雲端維護期間仍可使用行情、排行與智慧分析；訪客資料只保留在目前瀏覽工作階段。")
+    if st.button("暫時以訪客模式進入", use_container_width=True):
+        st.session_state.guest_mode = True
+        st.rerun()
     st.stop()
 
 
@@ -2220,6 +2259,9 @@ with st.sidebar:
             st.toast("已安全登出")
     elif public_demo_mode():
         st.warning("目前尚未連接雲端帳號，資料只暫存在本次工作階段。")
+        if st.session_state.get("guest_mode") and st.button("返回登入", key="guest-back-login"):
+            st.session_state.pop("guest_mode", None)
+            st.rerun()
     st.toggle(
         "🎓 新手輔助術語提示",
         key="beginner_assist",
